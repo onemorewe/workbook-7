@@ -6,23 +6,26 @@ import ai.closepaw.app.AuthStoreHolder
 import ai.closepaw.llm.LLMClient
 import ai.closepaw.llm.LLMClientFactory
 import ai.closepaw.llm.LLMProvider
+import ai.closepaw.llm.ModelCatalog
 import ai.closepaw.llm.ModelCatalogRepositoryHolder
+import ai.closepaw.llm.RateLimitException
 import com.openai.models.responses.EasyInputMessage
 import com.openai.models.responses.ResponseInputItem
 
 /**
  * Turns a cumulative live transcript into either NOT_READY or one normalized intent.
  *
- * Important: this deliberately uses only the selected ChatGPT/Codex OAuth model. It never falls
- * back to API-key billing. Audio transcription still uses the separate OpenAI API key.
+ * Preferred route is the selected ChatGPT/Codex OAuth model. If and only if that request fails
+ * with a real rate/usage limit, the gate retries once through the mirrored OpenAI API-key model
+ * with the same underlying model id. Audio transcription already requires the OpenAI API key.
  */
 internal class HandsFreeIntentGate(
     context: Context,
 ) : AutoCloseable {
     private val appContext = context.applicationContext
     private var factory: LLMClientFactory? = null
-    private var client: LLMClient? = null
-    private var modelName: String? = null
+    private val clients = mutableMapOf<String, LLMClient>()
+    private var catalogIdentity: ModelCatalog? = null
 
     suspend fun classify(
         cumulativeTranscript: String,
@@ -34,19 +37,9 @@ internal class HandsFreeIntentGate(
         val settings = AppSettingsStore(appContext).load()
         val selected = settings.selectedModel
         val catalog = ModelCatalogRepositoryHolder.get(appContext).catalog.value
-        val entry = catalog.resolve(selected)
-        require(entry.provider == LLMProvider.OPENAI_CODEX) {
-            "Hands-free intent gate requires ChatGPT sign-in; selected model '$selected' uses ${entry.provider}."
-        }
-
-        val llm = if (client == null || modelName != selected) {
-            factory?.cleanupAll()
-            val builtFactory = LLMClientFactory(catalog, AuthStoreHolder.get(appContext))
-            factory = builtFactory
-            modelName = selected
-            builtFactory.create(selected).also { client = it }
-        } else {
-            client!!
+        val selectedEntry = catalog.resolve(selected)
+        require(selectedEntry.provider == LLMProvider.OPENAI_CODEX) {
+            "Hands-free intent gate requires a ChatGPT model; selected model '$selected' uses ${selectedEntry.provider}."
         }
 
         val input = listOf(
@@ -57,13 +50,53 @@ internal class HandsFreeIntentGate(
                     .build()
             )
         )
-        val result = llm.chatWithTools(
-            systemPrompt = if (finalAfterSilence) "$PROMPT\n\n$FINAL_SILENCE_HINT" else PROMPT,
-            inputItems = input,
-            tools = emptyList(),
-            model = selected,
-        )
+        val systemPrompt = if (finalAfterSilence) "$PROMPT\n\n$FINAL_SILENCE_HINT" else PROMPT
+
+        val primary = clientFor(catalog, selected)
+        val result = try {
+            primary.chatWithTools(
+                systemPrompt = systemPrompt,
+                inputItems = input,
+                tools = emptyList(),
+                model = selected,
+            )
+        } catch (limited: RateLimitException) {
+            val apiEntry = catalog.modelsFor(LLMProvider.OPENAI_API)
+                .firstOrNull { it.modelId == selectedEntry.modelId }
+                ?: throw IllegalStateException(
+                    "ChatGPT usage limit reached and no API mirror exists for ${selectedEntry.modelId}",
+                    limited,
+                )
+
+            val auth = AuthStoreHolder.get(appContext)
+            require(auth.has(LLMProvider.OPENAI_API)) {
+                "ChatGPT usage limit reached and OpenAI API key fallback is not configured"
+            }
+
+            HandsFreeDebugRelay.publish(
+                "intent-gate-fallback",
+                "ChatGPT usage limit reached; retrying intent gate via OpenAI API model ${apiEntry.name}",
+            )
+
+            clientFor(catalog, apiEntry.name).chatWithTools(
+                systemPrompt = systemPrompt,
+                inputItems = input,
+                tools = emptyList(),
+                model = apiEntry.name,
+            )
+        }
+
         parse(result.textContent.orEmpty())
+    }
+
+    private fun clientFor(catalog: ModelCatalog, model: String): LLMClient {
+        if (factory == null || catalogIdentity !== catalog) {
+            factory?.cleanupAll()
+            clients.clear()
+            factory = LLMClientFactory(catalog, AuthStoreHolder.get(appContext))
+            catalogIdentity = catalog
+        }
+        return clients.getOrPut(model) { factory!!.create(model) }
     }
 
     private fun parse(raw: String): String? {
@@ -77,18 +110,16 @@ internal class HandsFreeIntentGate(
     }
 
     override fun close() {
-        val old = factory
         factory = null
-        client = null
-        modelName = null
-        @Suppress("UNUSED_VARIABLE") val ignored = old
+        clients.clear()
+        catalogIdentity = null
     }
 
     suspend fun cleanup() {
         factory?.cleanupAll()
         factory = null
-        client = null
-        modelName = null
+        clients.clear()
+        catalogIdentity = null
     }
 
     companion object {
