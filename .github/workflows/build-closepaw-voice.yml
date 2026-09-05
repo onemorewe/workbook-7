@@ -121,6 +121,7 @@ jobs:
           cp patch_handsfree_start_order.py closepaw/patch_handsfree_start_order.py
           cp patch_handsfree_pipeline_reliability.py closepaw/patch_handsfree_pipeline_reliability.py
           cp patch_handsfree_observability.py closepaw/patch_handsfree_observability.py
+          cp patch_handsfree_wake_diagnostics.py closepaw/patch_handsfree_wake_diagnostics.py
           cd closepaw
           python3 patch_handsfree_integration.py
           python3 patch_handsfree_fix.py
@@ -129,6 +130,30 @@ jobs:
           python3 patch_handsfree_start_order.py
           python3 patch_handsfree_pipeline_reliability.py
           python3 patch_handsfree_observability.py
+          python3 patch_handsfree_wake_diagnostics.py
+
+      - name: Inject private trace write token when configured
+        env:
+          TRACE_WRITE_TOKEN: ${{ secrets.TRACE_WRITE_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          token = os.environ.get('TRACE_WRITE_TOKEN', '')
+          path = Path('closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/HandsFreeDebugRelay.kt')
+          text = path.read_text(encoding='utf-8')
+          placeholder = '__TRACE_WRITE_TOKEN__'
+          if token:
+              if placeholder not in text:
+                  raise SystemExit('Private trace token placeholder missing')
+              if not (32 <= len(token) <= 256) or not all(c.isalnum() or c in '_-' for c in token):
+                  raise SystemExit('TRACE_WRITE_TOKEN has invalid format')
+              path.write_text(text.replace(placeholder, token, 1), encoding='utf-8')
+              print('Private trace write credential injected')
+          else:
+              print('TRACE_WRITE_TOKEN is not configured; ntfy fallback remains active')
+          PY
 
       - name: Generate synthetic Hey Jarvis speech fixture
         run: |
