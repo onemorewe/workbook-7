@@ -36,9 +36,9 @@ voices:
       en_US-john-medium: en/en_US/john/medium
       en_GB-alan-medium: en/en_GB/alan/medium
 
-# Hard negatives are intentionally heavy on names and fragments that a car radio / podcast could
-# produce. "Лёша" is negative on purpose: the actual wake phrase remains the more distinctive
-# three-syllable "Алёша".
+# Hard negatives are intentionally heavy on nearby names/fragments that a car radio or podcast may
+# produce. Never put the actual wake word inside a negative phrase: the detector must still fire
+# when “Алёша” is immediately followed by the user's command.
 negative_phrases:
   - Лёша
   - Леша
@@ -55,7 +55,6 @@ negative_phrases:
   - Алло
   - Алиса
   - Алиша
-  - Алеша сказал
   - Лёша сказал
   - Хорошо
   - Хороший
@@ -75,8 +74,6 @@ negative_phrases:
   - Alyssa
   - Alicia
   - Elisha
-  - Alesha
-  - Alyosha
   - Hey Jarvis
   - Hey Google
   - Hey Siri
