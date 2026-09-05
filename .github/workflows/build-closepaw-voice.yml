@@ -59,8 +59,10 @@ jobs:
           cp custom/HandsFreeVoiceService.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/HandsFreeVoiceService.kt
           cp custom/HandsFreeSpeaker.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/HandsFreeSpeaker.kt
           cp patch_handsfree_integration.py closepaw/patch_handsfree_integration.py
+          cp patch_handsfree_fix.py closepaw/patch_handsfree_fix.py
           cd closepaw
           python3 patch_handsfree_integration.py
+          python3 patch_handsfree_fix.py
 
       - name: Run unit tests
         working-directory: closepaw
