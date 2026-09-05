@@ -6,16 +6,11 @@ root = Path('.')
 def replace_once(path: Path, old: str, new: str):
     text = path.read_text(encoding='utf-8')
     if old not in text:
-        raise SystemExit(f'Patch anchor not found in {path}: {old[:180]!r}')
+        raise SystemExit(f'Observability anchor not found in {path}: {old[:180]!r}')
     path.write_text(text.replace(old, new, 1), encoding='utf-8')
 
 
-# ---------------------------------------------------------------------------
-# AgentService: hands-free sessions are intentionally frictionless while this
-# prototype is being debugged: AUTO_APPROVE + trace always on. If the currently
-# running session was created with stricter policy, start a fresh hands-free
-# session instead of getting stuck on an approval prompt the driver cannot see.
-# ---------------------------------------------------------------------------
+# Hands-free sessions: no action approval prompts, and tracing is always on.
 agent = root / 'app/src/main/kotlin/ai/closepaw/app/AgentService.kt'
 text = agent.read_text(encoding='utf-8')
 if 'import ai.closepaw.protocol.ApprovalMode\n' not in text:
@@ -39,7 +34,7 @@ replace_once(
         serviceScope.launch {
             when (current.state.value) {
                 SessionState.Created, SessionState.Idle -> current.submit(Op.UserInput(command))
-                SessionState.Running, SessionState.Paused -> current.submit(Op.Supplement(command))
+                SessionState.Running, SessionState.Paused, SessionState.TakeoverPending -> current.submit(Op.Supplement(command))
                 SessionState.Shutdown -> runAgent(command)
             }
         }
@@ -63,11 +58,14 @@ replace_once(
             return
         }
 
-        ai.closepaw.ui.capsule.voice.HandsFreeDebugRelay.publish("agent", "submitting intent to existing hands-free session")
+        ai.closepaw.ui.capsule.voice.HandsFreeDebugRelay.publish(
+            "agent",
+            "submitting intent to existing hands-free session",
+        )
         serviceScope.launch {
             when (current!!.state.value) {
                 SessionState.Created, SessionState.Idle -> current.submit(Op.UserInput(command))
-                SessionState.Running, SessionState.Paused -> current.submit(Op.Supplement(command))
+                SessionState.Running, SessionState.Paused, SessionState.TakeoverPending -> current.submit(Op.Supplement(command))
                 SessionState.Shutdown -> runAgent(command, handsFree = true)
             }
         }
@@ -110,11 +108,7 @@ replace_once(
                         )''',
 )
 
-# ---------------------------------------------------------------------------
-# HandsFreeVoiceService: publish stage transitions, publish the committed
-# transcript, and speak an immediate acknowledgement containing the normalized
-# intent so the driver knows what the system accepted before execution starts.
-# ---------------------------------------------------------------------------
+# Publish stage transitions and speak what was actually accepted by the intent gate.
 voice = root / 'app/src/main/kotlin/ai/closepaw/ui/capsule/voice/HandsFreeVoiceService.kt'
 replace_once(
     voice,
@@ -188,11 +182,7 @@ replace_once(
 ''',
 )
 
-# ---------------------------------------------------------------------------
-# Mirror the existing structured trace timeline to the same ephemeral debug
-# topic. Artifact bodies (screenshots, prompts, tool args) stay local; only the
-# trace JSONL event itself is mirrored.
-# ---------------------------------------------------------------------------
+# Mirror only structured trace timeline events. Screenshot/prompt/tool-argument artifacts stay local.
 trace = root / 'app/src/main/kotlin/ai/closepaw/trace/FileTraceRecorder.kt'
 replace_once(
     trace,
@@ -209,10 +199,7 @@ replace_once(
 ''',
 )
 
-# ---------------------------------------------------------------------------
-# Voice & Runtime page: expose a copyable read URL. The random topic is created
-# on-device, never committed to this public repository.
-# ---------------------------------------------------------------------------
+# Expose the random read URL in Voice & Runtime.
 settings = root / 'app/src/main/kotlin/ai/closepaw/ui/settings/VoiceRuntimeSettingsPage.kt'
 text = settings.read_text(encoding='utf-8')
 if 'import ai.closepaw.ui.capsule.voice.HandsFreeDebugRelay\n' not in text:
@@ -241,7 +228,7 @@ replace_once(
                     ),
 ''',
     '''                        "Answer voice: Android TTS · $ttsEngine · language auto RU/EN",
-                        "Approvals: AUTO-APPROVE while hands-free is active",
+                        "Approvals: AUTO-APPROVE in hands-free",
                         "Trace: forced ON for hands-free sessions",
                         "Debug stream: $debugUrl",
                     ),
