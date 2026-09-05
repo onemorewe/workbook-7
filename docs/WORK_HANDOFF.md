@@ -120,6 +120,8 @@ The existing backend unit tests and Postgres permission/deduplication tests rema
 
 The public repository contains only the placeholder `__TRACE_WRITE_TOKEN__`, not the real device credential. Private transport stays dormant while the placeholder is present. ntfy remains enabled.
 
+GitHub Actions now knows how to replace `__TRACE_WRITE_TOKEN__` from repository secret `TRACE_WRITE_TOKEN` during the build without printing the credential. The GitHub connector available to this agent cannot create repository Actions secrets, so the secret is **not yet provisioned**. Until it exists, CI explicitly leaves the placeholder in place and the APK uses ntfy fallback only.
+
 Do not commit the plaintext write credential. Provision it at build time or through another private device-provisioning path.
 
 Next observability work after credential provisioning:
@@ -177,16 +179,45 @@ Required gates before distributing a new APK:
 
 At the beginning of this continuation, branch HEAD `1ad9915b094ec979c429043ea9a1668e1105840d` had fully green GitHub Actions run **54**. Subsequent commits for the deployed registry/functions/Android dual-write have triggered newer CI runs; check the latest run before distributing any APK.
 
+## Wake failure investigation — 2026-09-05
+
+The user reports that the currently installed older build behaves as if hands-free never wakes: ordinary ClosePaw works, but saying **Hey Jarvis** produces no visible transcript, no execution, and no audible wake acknowledgement.
+
+Important diagnosis from the code: `beginCommand()` already emits a wake beep before opening Realtime transcription. Therefore **no first beep means the failure is before STT and before the intent gate**. Investigate only this path first:
+
+`foreground service -> AudioRecord -> microWakeWord frontend/model -> wake threshold`
+
+Do not spend time debugging OpenAI Realtime or intent execution until `wake-detected` is observed.
+
+The old pinned ntfy endpoint remains the current installed build's remote path, but this agent runtime cannot fetch the topic endpoint directly due network/tool restrictions, so no old-phone event was claimed or invented.
+
+New diagnostic patch `patch_handsfree_wake_diagnostics.py` is applied after existing hands-free patches. It adds:
+
+- `heartbeat` every ~15 seconds while idle/wake-listening;
+- number of microphone frames received;
+- maximum PCM amplitude for the interval (numeric only; no raw audio);
+- latest and peak microWakeWord probability;
+- configured probability cutoff;
+- explicit `wake-detected` event;
+- visible `Слушаю…` text immediately after wake;
+- existing wake-start beep remains;
+- second short acknowledgement tone when server VAD/final transcription says the utterance ended.
+
+The pinned `Hey Jarvis` model manifest uses `probability_cutoff = 0.97` and a sliding window size of 5. Do not lower this blindly yet. First inspect real Samsung heartbeat `wake_peak` values. If microphone PCM is healthy but real speech consistently peaks below 0.97, tune threshold/frontend from evidence rather than guessing.
+
+The existing synthetic CI test is useful but weak for real-device sensitivity because it only requires at least one of several concatenated neural voices to trigger. Real Samsung capture/frontend behavior still needs the new heartbeat data.
+
 ## Immediate next steps
 
 1. Let the latest branch CI finish and fix any failure before release.
-2. Provision the generated device write credential privately into the build/device path without committing it.
+2. Provision a fresh device write credential privately as GitHub Actions secret `TRACE_WRITE_TOKEN`; never commit it.
 3. Run `trace-backend/scripts/round-trip.mjs` from an environment with outbound network access against the deployed functions.
 4. Configure the existing owner-only Site with the real `TRACE_READ_URL` and separate read credential.
 5. Build a stable-signed APK with private ingest enabled.
 6. Install over the existing stable-signed build; do not uninstall.
-7. Trigger a known Samsung hands-free event and verify its event ID/app version/time in private Supabase storage.
-8. Keep ntfy until that real-phone event is confirmed.
-9. Add richer run/session/tool/LLM/outcome correlation so a report such as `Jarvis не сработал примерно сейчас` can be diagnosed remotely with no user log extraction.
+7. With the phone idle in hands-free, inspect heartbeat first. `pcm_peak` proves microphone signal; `wake_peak` versus cutoff identifies model sensitivity. Then say `Hey Jarvis` and require `wake-detected` + first beep before testing STT/intent.
+8. Trigger a known Samsung hands-free event and verify its event ID/app version/time in private Supabase storage.
+9. Keep ntfy until that real-phone event is confirmed.
+10. Add richer run/session/tool/LLM/outcome correlation so a report such as `Jarvis не сработал примерно сейчас` can be diagnosed remotely with no user log extraction.
 
 Priority remains working hands-free behavior, observability, clear statuses, private traces, and self-service debugging—not cosmetic architecture work.
