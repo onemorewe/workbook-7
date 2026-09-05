@@ -16,8 +16,9 @@ import org.json.JSONObject
 /**
  * One Realtime transcription socket for one wake-word command session.
  *
- * Audio is 24 kHz mono PCM16. OpenAI server VAD only chunks speech and tells the service when it is
- * worth running the intent gate; VAD never executes a command by itself.
+ * Audio is 24 kHz mono PCM16. OpenAI server VAD chunks speech and commits a user item. A completed
+ * transcription is itself proof that the VAD turn was committed, so delivery does not depend on a
+ * second speech_stopped event arriving in a particular order.
  */
 internal class RealtimeCommandTranscriber(
     private val apiKey: String,
@@ -43,7 +44,6 @@ internal class RealtimeCommandTranscriber(
     private val turnOrder = mutableListOf<String>()
     private val partials = LinkedHashMap<String, StringBuilder>()
     private val finals = LinkedHashMap<String, String>()
-    private val stopped = mutableSetOf<String>()
     private val delivered = mutableSetOf<String>()
 
     @Volatile private var socket: WebSocket? = null
@@ -124,60 +124,7 @@ internal class RealtimeCommandTranscriber(
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {
-            if (closed) return
-            val event = runCatching { JSONObject(text) }.getOrNull() ?: return
-            when (event.optString("type")) {
-                "input_audio_buffer.speech_started" -> {
-                    val id = event.optString("item_id")
-                    if (id.isNotBlank()) {
-                        synchronized(lock) { ensureTurn(id) }
-                        listener.onSpeechStarted(id)
-                    }
-                }
-                "input_audio_buffer.speech_stopped" -> {
-                    val id = event.optString("item_id")
-                    if (id.isNotBlank()) {
-                        synchronized(lock) {
-                            ensureTurn(id)
-                            stopped.add(id)
-                        }
-                        listener.onSpeechStopped(id)
-                        maybeDeliver(id)
-                    }
-                }
-                "conversation.item.input_audio_transcription.delta" -> {
-                    val id = event.optString("item_id")
-                    val delta = event.optString("delta")
-                    if (id.isNotBlank() && delta.isNotEmpty()) {
-                        val live = synchronized(lock) {
-                            ensureTurn(id)
-                            partials.getOrPut(id) { StringBuilder() }.append(delta)
-                            composeTranscriptLocked()
-                        }
-                        listener.onLiveTranscript(live)
-                    }
-                }
-                "conversation.item.input_audio_transcription.completed" -> {
-                    val id = event.optString("item_id")
-                    val transcript = event.optString("transcript").trim()
-                    if (id.isNotBlank()) {
-                        val live = synchronized(lock) {
-                            ensureTurn(id)
-                            finals[id] = transcript
-                            partials.remove(id)
-                            composeTranscriptLocked()
-                        }
-                        listener.onLiveTranscript(live)
-                        maybeDeliver(id)
-                    }
-                }
-                "error" -> {
-                    val error = event.optJSONObject("error")
-                    val msg = error?.optString("message")?.takeIf { it.isNotBlank() }
-                        ?: event.toString().take(300)
-                    listener.onError(msg)
-                }
-            }
+            handleServerEvent(text)
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
@@ -185,9 +132,80 @@ internal class RealtimeCommandTranscriber(
         }
     }
 
+    /** Shared parser used by the live socket and Android instrumentation tests. */
+    internal fun handleServerEventForTest(text: String) {
+        handleServerEvent(text)
+    }
+
+    private fun handleServerEvent(text: String) {
+        if (closed) return
+        val event = runCatching { JSONObject(text) }.getOrNull() ?: return
+        when (event.optString("type")) {
+            "input_audio_buffer.speech_started" -> {
+                val id = event.optString("item_id")
+                if (id.isNotBlank()) {
+                    synchronized(lock) { ensureTurn(id) }
+                    listener.onSpeechStarted(id)
+                }
+            }
+            "input_audio_buffer.speech_stopped" -> {
+                val id = event.optString("item_id")
+                if (id.isNotBlank()) {
+                    synchronized(lock) { ensureTurn(id) }
+                    listener.onSpeechStopped(id)
+                }
+            }
+            "input_audio_buffer.committed" -> {
+                val id = event.optString("item_id")
+                if (id.isNotBlank()) synchronized(lock) { ensureTurn(id) }
+            }
+            "conversation.item.input_audio_transcription.delta" -> {
+                val id = event.optString("item_id")
+                val delta = event.optString("delta")
+                if (id.isNotBlank() && delta.isNotEmpty()) {
+                    val live = synchronized(lock) {
+                        ensureTurn(id)
+                        partials.getOrPut(id) { StringBuilder() }.append(delta)
+                        composeTranscriptLocked()
+                    }
+                    listener.onLiveTranscript(live)
+                }
+            }
+            "conversation.item.input_audio_transcription.completed" -> {
+                val id = event.optString("item_id")
+                val transcript = event.optString("transcript").trim()
+                if (id.isNotBlank()) {
+                    val live = synchronized(lock) {
+                        ensureTurn(id)
+                        finals[id] = transcript
+                        partials.remove(id)
+                        composeTranscriptLocked()
+                    }
+                    listener.onLiveTranscript(live)
+                    // A completed transcription only exists after the input item was committed.
+                    // With server VAD, that commit is the end-of-turn boundary. Do not require a
+                    // separate speech_stopped event as a second gate; event ordering can vary.
+                    maybeDeliver(id)
+                }
+            }
+            "conversation.item.input_audio_transcription.failed" -> {
+                val error = event.optJSONObject("error")
+                val msg = error?.optString("message")?.takeIf { it.isNotBlank() }
+                    ?: "Realtime transcription failed"
+                listener.onError(msg)
+            }
+            "error" -> {
+                val error = event.optJSONObject("error")
+                val msg = error?.optString("message")?.takeIf { it.isNotBlank() }
+                    ?: event.toString().take(300)
+                listener.onError(msg)
+            }
+        }
+    }
+
     private fun maybeDeliver(itemId: String) {
         val payload = synchronized(lock) {
-            if (itemId !in stopped || itemId !in finals || itemId in delivered) return@synchronized null
+            if (itemId !in finals || itemId in delivered) return@synchronized null
             delivered.add(itemId)
             composeTranscriptLocked()
         }
