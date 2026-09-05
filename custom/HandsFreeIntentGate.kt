@@ -15,9 +15,9 @@ import com.openai.models.responses.ResponseInputItem
 /**
  * Turns a cumulative live transcript into either NOT_READY or one normalized intent.
  *
- * Preferred route is the selected ChatGPT/Codex OAuth model. If and only if that request fails
- * with a real rate/usage limit, the gate retries once through the mirrored OpenAI API-key model
- * with the same underlying model id. Audio transcription already requires the OpenAI API key.
+ * If the configured agent model uses ChatGPT/Codex OAuth, the gate tries the subscription route
+ * first and falls back only on a real rate/usage limit to the mirrored OpenAI API-key model.
+ * If the configured agent model already uses OpenAI API, the gate uses that API model directly.
  */
 internal class HandsFreeIntentGate(
     context: Context,
@@ -38,8 +38,11 @@ internal class HandsFreeIntentGate(
         val selected = settings.selectedModel
         val catalog = ModelCatalogRepositoryHolder.get(appContext).catalog.value
         val selectedEntry = catalog.resolve(selected)
-        require(selectedEntry.provider == LLMProvider.OPENAI_CODEX) {
-            "Hands-free intent gate requires a ChatGPT model; selected model '$selected' uses ${selectedEntry.provider}."
+        require(
+            selectedEntry.provider == LLMProvider.OPENAI_CODEX ||
+                selectedEntry.provider == LLMProvider.OPENAI_API
+        ) {
+            "Hands-free intent gate requires an OpenAI ChatGPT/API model; selected model '$selected' uses ${selectedEntry.provider}."
         }
 
         val input = listOf(
@@ -52,42 +55,63 @@ internal class HandsFreeIntentGate(
         )
         val systemPrompt = if (finalAfterSilence) "$PROMPT\n\n$FINAL_SILENCE_HINT" else PROMPT
 
-        val primary = clientFor(catalog, selected)
-        val result = try {
-            primary.chatWithTools(
-                systemPrompt = systemPrompt,
-                inputItems = input,
-                tools = emptyList(),
-                model = selected,
-            ).also {
-                // OAuth works again: stop forcing API execution for subsequent hands-free tasks.
+        val result = when (selectedEntry.provider) {
+            LLMProvider.OPENAI_API -> {
+                val auth = AuthStoreHolder.get(appContext)
+                require(auth.has(LLMProvider.OPENAI_API)) {
+                    "OpenAI API key is required for the hands-free intent gate"
+                }
+                // Direct API selection is not an OAuth fallback; execution should follow settings.
                 activeFallbackModel = null
-            }
-        } catch (limited: RateLimitException) {
-            val apiEntry = catalog.modelsFor(LLMProvider.OPENAI_API)
-                .firstOrNull { it.modelId == selectedEntry.modelId }
-                ?: throw IllegalStateException(
-                    "ChatGPT usage limit reached and no API mirror exists for ${selectedEntry.modelId}",
-                    limited,
+                clientFor(catalog, selected).chatWithTools(
+                    systemPrompt = systemPrompt,
+                    inputItems = input,
+                    tools = emptyList(),
+                    model = selected,
                 )
-
-            val auth = AuthStoreHolder.get(appContext)
-            require(auth.has(LLMProvider.OPENAI_API)) {
-                "ChatGPT usage limit reached and OpenAI API key fallback is not configured"
             }
 
-            activeFallbackModel = apiEntry.name
-            HandsFreeDebugRelay.publish(
-                "intent-gate-fallback",
-                "ChatGPT usage limit reached; retrying intent gate via OpenAI API model ${apiEntry.name}",
-            )
+            LLMProvider.OPENAI_CODEX -> {
+                val primary = clientFor(catalog, selected)
+                try {
+                    primary.chatWithTools(
+                        systemPrompt = systemPrompt,
+                        inputItems = input,
+                        tools = emptyList(),
+                        model = selected,
+                    ).also {
+                        // OAuth works again: stop forcing API execution for subsequent hands-free tasks.
+                        activeFallbackModel = null
+                    }
+                } catch (limited: RateLimitException) {
+                    val apiEntry = catalog.modelsFor(LLMProvider.OPENAI_API)
+                        .firstOrNull { it.modelId == selectedEntry.modelId }
+                        ?: throw IllegalStateException(
+                            "ChatGPT usage limit reached and no API mirror exists for ${selectedEntry.modelId}",
+                            limited,
+                        )
 
-            clientFor(catalog, apiEntry.name).chatWithTools(
-                systemPrompt = systemPrompt,
-                inputItems = input,
-                tools = emptyList(),
-                model = apiEntry.name,
-            )
+                    val auth = AuthStoreHolder.get(appContext)
+                    require(auth.has(LLMProvider.OPENAI_API)) {
+                        "ChatGPT usage limit reached and OpenAI API key fallback is not configured"
+                    }
+
+                    activeFallbackModel = apiEntry.name
+                    HandsFreeDebugRelay.publish(
+                        "intent-gate-fallback",
+                        "ChatGPT usage limit reached; retrying intent gate via OpenAI API model ${apiEntry.name}",
+                    )
+
+                    clientFor(catalog, apiEntry.name).chatWithTools(
+                        systemPrompt = systemPrompt,
+                        inputItems = input,
+                        tools = emptyList(),
+                        model = apiEntry.name,
+                    )
+                }
+            }
+
+            else -> error("Unsupported hands-free intent provider ${selectedEntry.provider}")
         }
 
         parse(result.textContent.orEmpty())
