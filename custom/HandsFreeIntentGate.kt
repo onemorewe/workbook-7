@@ -89,7 +89,7 @@ internal class HandsFreeIntentGate(
         parse(result.textContent.orEmpty())
     }
 
-    private fun clientFor(catalog: ModelCatalog, model: String): LLMClient {
+    private suspend fun clientFor(catalog: ModelCatalog, model: String): LLMClient {
         if (factory == null || catalogIdentity !== catalog) {
             factory?.cleanupAll()
             clients.clear()
