@@ -34,7 +34,11 @@ internal class RealtimeCommandTranscriber(
     }
 
     companion object {
-        private const val URL = "wss://api.openai.com/v1/realtime?model=gpt-live-transcribe"
+        // Transcription-only Realtime sessions are selected with intent=transcription. The
+        // transcription model itself belongs in session.audio.input.transcription.model below;
+        // putting gpt-live-transcribe in the URL's model= parameter makes the server treat it as
+        // the root realtime/conversation model and reject the connection as invalid_model.
+        private const val URL = "wss://api.openai.com/v1/realtime?intent=transcription"
         private const val MAX_PENDING_FRAMES = 125 // roughly 2.5 s at 20 ms/frame
     }
 
