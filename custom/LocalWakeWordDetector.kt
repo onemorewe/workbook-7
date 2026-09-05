@@ -23,6 +23,9 @@ internal class LocalWakeWordDetector(
         const val MANIFEST_ASSET = "wake_word.json"
     }
 
+    var wakeWordLabel: String = "wake word"
+        private set
+
     private var frontend: MicroFrontend? = null
     private var interpreter: Interpreter? = null
     private var inputScale = 1f
@@ -41,7 +44,11 @@ internal class LocalWakeWordDetector(
         val manifest = JSONObject(
             context.assets.open(MANIFEST_ASSET).bufferedReader(Charsets.UTF_8).use { it.readText() }
         )
+        wakeWordLabel = manifest.optString("wake_word", "wake word")
         val micro = manifest.getJSONObject("micro")
+        require(micro.optInt("feature_step_size", MicroFrontend.STEP_SIZE_MS) == MicroFrontend.STEP_SIZE_MS) {
+            "microWakeWord manifest feature_step_size must be ${MicroFrontend.STEP_SIZE_MS} ms"
+        }
         cutoff = micro.optDouble("probability_cutoff", 0.9).toFloat()
         slidingWindow = maxOf(
             1,
@@ -145,15 +152,28 @@ internal class LocalWakeWordDetector(
         recentProbabilities.clear()
     }
 
-    /** Exact-ratio resampler for our fixed twenty-millisecond 24 kHz frames. */
+    /**
+     * Exact 3:2 resampler for our fixed twenty-millisecond 24 kHz frames. Odd output samples are
+     * linearly interpolated instead of nearest-neighbour decimated; VOICE_RECOGNITION capture is
+     * already speech-band-limited, so this is a small and cheap bridge into the 16 kHz wake model.
+     */
     private fun downsample24To16(input: ShortArray, length: Int): ShortArray {
         val safeLength = length.coerceAtMost(input.size)
-        val outSize = (safeLength * 2) / 3
-        if (outSize <= 0) return ShortArray(0)
-        return ShortArray(outSize) { index ->
-            val source = (index * 3) / 2
-            input[source.coerceAtMost(safeLength - 1)]
+        val groups = safeLength / 3
+        if (groups <= 0) return ShortArray(0)
+        val out = ShortArray(groups * 2)
+        var src = 0
+        var dst = 0
+        repeat(groups) {
+            val a = input[src].toInt()
+            val b = input[src + 1].toInt()
+            val c = input[src + 2].toInt()
+            out[dst] = a.toShort()
+            out[dst + 1] = ((b + c) / 2).coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()
+            src += 3
+            dst += 2
         }
+        return out
     }
 
     override fun close() {
