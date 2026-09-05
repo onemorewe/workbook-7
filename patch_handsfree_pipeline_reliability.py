@@ -109,4 +109,19 @@ if old not in s:
     raise SystemExit('evaluateIntent anchor not found')
 
 p.write_text(s.replace(old, new, 1), encoding='utf-8')
+
+# Black-box UI smoke test clicks through the real app with UiAutomator.
+gradle = Path('app/build.gradle.kts')
+g = gradle.read_text(encoding='utf-8')
+anchor = '    androidTestImplementation("androidx.test.ext:junit:1.2.1")\n'
+if anchor not in g:
+    raise SystemExit('androidTest dependency anchor not found')
+if 'androidx.test.uiautomator:uiautomator' not in g:
+    g = g.replace(
+        anchor,
+        anchor + '    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")\n',
+        1,
+    )
+gradle.write_text(g, encoding='utf-8')
+
 print('Hands-free pipeline reliability patch applied')
