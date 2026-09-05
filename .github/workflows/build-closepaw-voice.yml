@@ -70,7 +70,10 @@ jobs:
           rm -rf /tmp/vosk-model
           mkdir -p /tmp/vosk-model closepaw/app/src/main/assets
           unzip -q /tmp/vosk-model-small-ru-0.22.zip -d /tmp/vosk-model
-          test -f /tmp/vosk-model/vosk-model-small-ru-0.22/uuid
+          test -d /tmp/vosk-model/vosk-model-small-ru-0.22
+          # Vosk Android StorageService uses this marker only for asset-version synchronization;
+          # the upstream desktop model archive does not ship one.
+          printf '%s\n' 'closepaw-vosk-small-ru-0.22-v1' > /tmp/vosk-model/vosk-model-small-ru-0.22/uuid
           cp -R /tmp/vosk-model/vosk-model-small-ru-0.22 closepaw/app/src/main/assets/
 
           cp patch_handsfree_integration.py closepaw/patch_handsfree_integration.py
