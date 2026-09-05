@@ -1,0 +1,9 @@
+ClosePaw hands-free prototype remote debug stream
+
+Read cached JSON events:
+https://ntfy.sh/closepaw-hf-7ff9c7fb0ec9b03ae896c1af451e26826e2eff8fa63824fd/json?poll=1&since=12h
+
+Publish endpoint used by the app:
+https://ntfy.sh/closepaw-hf-7ff9c7fb0ec9b03ae896c1af451e26826e2eff8fa63824fd
+
+Development-only endpoint. The topic is intentionally committed so remote debugging survives app updates and reinstalls.
