@@ -120,7 +120,11 @@ The existing backend unit tests and Postgres permission/deduplication tests rema
 
 The public repository contains only the placeholder `__TRACE_WRITE_TOKEN__`, not the real device credential. Private transport stays dormant while the placeholder is present. ntfy remains enabled.
 
-GitHub Actions now knows how to replace `__TRACE_WRITE_TOKEN__` from repository secret `TRACE_WRITE_TOKEN` during the build without printing the credential. The GitHub connector available to this agent cannot create repository Actions secrets, so the secret is **not yet provisioned**. Until it exists, CI explicitly leaves the placeholder in place and the APK uses ntfy fallback only.
+GitHub Actions knows how to replace `__TRACE_WRITE_TOKEN__` from repository secret `TRACE_WRITE_TOKEN` during the build without printing the credential. The workflow validates token format before replacement and logs only whether injection happened, never the value.
+
+On 2026-09-05 the current S24 Ultra write credential was rotated: the old write hash was removed from `private_trace_tokens`, and a new write hash was registered for device `s24-ultra`. The plaintext was handed directly to the user for one-time provisioning as repository Actions secret `TRACE_WRITE_TOKEN`; never record the plaintext in this handoff, repository, issue, logs, or traces.
+
+Until `TRACE_WRITE_TOKEN` is actually added to GitHub repository Actions secrets, CI leaves the placeholder in place and the APK uses ntfy fallback only.
 
 Do not commit the plaintext write credential. Provision it at build time or through another private device-provisioning path.
 
@@ -210,11 +214,11 @@ The existing synthetic CI test is useful but weak for real-device sensitivity be
 ## Immediate next steps
 
 1. Let the latest branch CI finish and fix any failure before release.
-2. Provision a fresh device write credential privately as GitHub Actions secret `TRACE_WRITE_TOKEN`; never commit it.
-3. Run `trace-backend/scripts/round-trip.mjs` from an environment with outbound network access against the deployed functions.
-4. Configure the existing owner-only Site with the real `TRACE_READ_URL` and separate read credential.
-5. Build a stable-signed APK with private ingest enabled.
-6. Install over the existing stable-signed build; do not uninstall.
+2. Add the freshly rotated device write credential as GitHub repository Actions secret named exactly `TRACE_WRITE_TOKEN`.
+3. Trigger a new branch workflow run/commit after the secret exists so the APK is built with private ingest enabled.
+4. Run `trace-backend/scripts/round-trip.mjs` from an environment with outbound network access against the deployed functions.
+5. Configure the existing owner-only Site with the real `TRACE_READ_URL` and separate read credential.
+6. Install the resulting stable-signed APK over the existing stable-signed build; do not uninstall.
 7. With the phone idle in hands-free, inspect heartbeat first. `pcm_peak` proves microphone signal; `wake_peak` versus cutoff identifies model sensitivity. Then say `Hey Jarvis` and require `wake-detected` + first beep before testing STT/intent.
 8. Trigger a known Samsung hands-free event and verify its event ID/app version/time in private Supabase storage.
 9. Keep ntfy until that real-phone event is confirmed.
