@@ -110,8 +110,32 @@ internal class OpenAIRecognizer(
         try { release(true) } catch (_: Throwable) { delete(); error(VoiceError.NoMatch); return }
         job = scope.launch {
             try { finish(transcribe(audio).trim()) }
-            catch (_: IOException) { error(VoiceError.Network) }
-            catch (_: Throwable) { error(VoiceError.Unknown) }
+            catch (e: OpenAIVoiceHttpException) {
+                val mapped = mapOpenAiVoiceHttpStatus(e.status)
+                HandsFreeDebugRelay.publish(
+                    stage = "voice-http-error",
+                    level = "error",
+                    message = "OpenAI voice HTTP ${e.status}",
+                    metadata = mapOf("http_status" to e.status, "mapped_error" to mapped.name),
+                )
+                error(mapped)
+            }
+            catch (_: IOException) {
+                HandsFreeDebugRelay.publish(
+                    stage = "voice-network-error",
+                    level = "error",
+                    message = "OpenAI voice network I/O failure",
+                )
+                error(VoiceError.Network)
+            }
+            catch (_: Throwable) {
+                HandsFreeDebugRelay.publish(
+                    stage = "voice-runtime-error",
+                    level = "error",
+                    message = "OpenAI voice unexpected runtime failure",
+                )
+                error(VoiceError.Unknown)
+            }
             finally { delete() }
         }
     }
@@ -153,9 +177,81 @@ internal class OpenAIRecognizer(
             }
             val status = c.responseCode
             val body = (if (status in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
-            if (status !in 200..299) throw IOException("HTTP $status")
+            if (status !in 200..299) throw OpenAIVoiceHttpException(status)
             return JSONObject(body).optString("text", "")
         } finally { c.disconnect() }
+    }
+}
+
+internal class OpenAIVoiceHttpException(val status: Int) : IOException("HTTP $status")
+
+internal fun mapOpenAiVoiceHttpStatus(status: Int): VoiceError = when (status) {
+    401, 403 -> VoiceError.ApiAuth
+    429 -> VoiceError.ApiRateLimit
+    else -> VoiceError.ApiRequest
+}
+''', encoding='utf-8')
+
+# Distinguish actual connectivity from HTTP/auth/rate/model failures. Previously every non-2xx
+# response became VoiceError.Network and the UI incorrectly told the user that internet was needed.
+recognizer = voice_dir / 'Recognizer.kt'
+replace_once(
+    recognizer,
+    '    NetworkTimeout,\n    LanguageUnavailable,\n',
+    '    NetworkTimeout,\n    ApiAuth,\n    ApiRateLimit,\n    ApiRequest,\n    LanguageUnavailable,\n',
+)
+controller = voice_dir / 'VoiceInputController.kt'
+replace_once(
+    controller,
+    '''        VoiceError.Network, VoiceError.NetworkTimeout -> {
+            onText(baseText)
+            onToast("Voice needs network for this language")
+            VoiceState.Idle
+        }
+''',
+    '''        VoiceError.Network, VoiceError.NetworkTimeout -> {
+            onText(baseText)
+            onToast("Voice network connection failed")
+            VoiceState.Idle
+        }
+        VoiceError.ApiAuth -> {
+            onText(baseText)
+            onToast("OpenAI voice authentication failed — check API key")
+            VoiceState.Idle
+        }
+        VoiceError.ApiRateLimit -> {
+            onText(baseText)
+            onToast("OpenAI voice limit reached (HTTP 429)")
+            VoiceState.Idle
+        }
+        VoiceError.ApiRequest -> {
+            onText(baseText)
+            onToast("OpenAI voice request failed")
+            VoiceState.Idle
+        }
+''',
+)
+
+test_dir = root / 'app/src/test/kotlin/ai/closepaw/ui/capsule/voice'
+test_dir.mkdir(parents=True, exist_ok=True)
+(test_dir / 'VoiceHttpErrorMappingTest.kt').write_text(r'''package ai.closepaw.ui.capsule.voice
+
+import kotlin.test.Test
+import kotlin.test.assertEquals
+
+class VoiceHttpErrorMappingTest {
+    @Test fun authErrorsAreAuth() {
+        assertEquals(VoiceError.ApiAuth, mapOpenAiVoiceHttpStatus(401))
+        assertEquals(VoiceError.ApiAuth, mapOpenAiVoiceHttpStatus(403))
+    }
+
+    @Test fun rateLimitIsRateLimit() {
+        assertEquals(VoiceError.ApiRateLimit, mapOpenAiVoiceHttpStatus(429))
+    }
+
+    @Test fun modelAndServerErrorsAreApiRequests() {
+        assertEquals(VoiceError.ApiRequest, mapOpenAiVoiceHttpStatus(400))
+        assertEquals(VoiceError.ApiRequest, mapOpenAiVoiceHttpStatus(500))
     }
 }
 ''', encoding='utf-8')
