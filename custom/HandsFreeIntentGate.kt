@@ -15,9 +15,13 @@ import com.openai.models.responses.ResponseInputItem
 /**
  * Turns a cumulative live transcript into either NOT_READY or one normalized intent.
  *
- * If the configured agent model uses ChatGPT/Codex OAuth, the gate tries the subscription route
- * first and falls back only on a real rate/usage limit to the mirrored OpenAI API-key model.
- * If the configured agent model already uses OpenAI API, the gate uses that API model directly.
+ * Hands-free routing is intentionally independent from the ordinary agent auth selector:
+ * - if a ChatGPT/Codex OAuth mirror exists and OAuth is connected, use it first;
+ * - fall back to the matching OpenAI API model only on a real rate/usage limit;
+ * - if the user explicitly selected an OpenAI API model and no usable OAuth mirror exists,
+ *   use that API model directly.
+ *
+ * The model used by the gate is also exposed to AgentService so execution follows the same route.
  */
 internal class HandsFreeIntentGate(
     context: Context,
@@ -26,6 +30,12 @@ internal class HandsFreeIntentGate(
     private var factory: LLMClientFactory? = null
     private val clients = mutableMapOf<String, LLMClient>()
     private var catalogIdentity: ModelCatalog? = null
+
+    private data class Route(
+        val primaryModel: String,
+        val primaryProvider: LLMProvider,
+        val apiFallbackModel: String?,
+    )
 
     suspend fun classify(
         cumulativeTranscript: String,
@@ -37,13 +47,7 @@ internal class HandsFreeIntentGate(
         val settings = AppSettingsStore(appContext).load()
         val selected = settings.selectedModel
         val catalog = ModelCatalogRepositoryHolder.get(appContext).catalog.value
-        val selectedEntry = catalog.resolve(selected)
-        require(
-            selectedEntry.provider == LLMProvider.OPENAI_CODEX ||
-                selectedEntry.provider == LLMProvider.OPENAI_API
-        ) {
-            "Hands-free intent gate requires an OpenAI ChatGPT/API model; selected model '$selected' uses ${selectedEntry.provider}."
-        }
+        val route = resolveRoute(catalog, selected)
 
         val input = listOf(
             ResponseInputItem.ofEasyInputMessage(
@@ -55,66 +59,109 @@ internal class HandsFreeIntentGate(
         )
         val systemPrompt = if (finalAfterSilence) "$PROMPT\n\n$FINAL_SILENCE_HINT" else PROMPT
 
-        val result = when (selectedEntry.provider) {
+        val result = when (route.primaryProvider) {
             LLMProvider.OPENAI_API -> {
-                val auth = AuthStoreHolder.get(appContext)
-                require(auth.has(LLMProvider.OPENAI_API)) {
-                    "OpenAI API key is required for the hands-free intent gate"
-                }
-                // Direct API selection is not an OAuth fallback; execution should follow settings.
-                activeFallbackModel = null
-                clientFor(catalog, selected).chatWithTools(
+                activeExecutionModel = route.primaryModel
+                clientFor(catalog, route.primaryModel).chatWithTools(
                     systemPrompt = systemPrompt,
                     inputItems = input,
                     tools = emptyList(),
-                    model = selected,
+                    model = route.primaryModel,
                 )
             }
 
             LLMProvider.OPENAI_CODEX -> {
-                val primary = clientFor(catalog, selected)
+                activeExecutionModel = route.primaryModel
+                val primary = clientFor(catalog, route.primaryModel)
                 try {
                     primary.chatWithTools(
                         systemPrompt = systemPrompt,
                         inputItems = input,
                         tools = emptyList(),
-                        model = selected,
+                        model = route.primaryModel,
                     ).also {
-                        // OAuth works again: stop forcing API execution for subsequent hands-free tasks.
-                        activeFallbackModel = null
+                        // OAuth works: execution should stay on the subscription route.
+                        activeExecutionModel = route.primaryModel
                     }
                 } catch (limited: RateLimitException) {
-                    val apiEntry = catalog.modelsFor(LLMProvider.OPENAI_API)
-                        .firstOrNull { it.modelId == selectedEntry.modelId }
+                    val fallback = route.apiFallbackModel
                         ?: throw IllegalStateException(
-                            "ChatGPT usage limit reached and no API mirror exists for ${selectedEntry.modelId}",
+                            "ChatGPT usage limit reached and no API mirror exists for ${route.primaryModel}",
                             limited,
                         )
 
-                    val auth = AuthStoreHolder.get(appContext)
-                    require(auth.has(LLMProvider.OPENAI_API)) {
-                        "ChatGPT usage limit reached and OpenAI API key fallback is not configured"
-                    }
-
-                    activeFallbackModel = apiEntry.name
+                    activeExecutionModel = fallback
                     HandsFreeDebugRelay.publish(
                         "intent-gate-fallback",
-                        "ChatGPT usage limit reached; retrying intent gate via OpenAI API model ${apiEntry.name}",
+                        "ChatGPT usage limit reached; retrying intent gate via OpenAI API model $fallback",
                     )
 
-                    clientFor(catalog, apiEntry.name).chatWithTools(
+                    clientFor(catalog, fallback).chatWithTools(
                         systemPrompt = systemPrompt,
                         inputItems = input,
                         tools = emptyList(),
-                        model = apiEntry.name,
+                        model = fallback,
                     )
                 }
             }
 
-            else -> error("Unsupported hands-free intent provider ${selectedEntry.provider}")
+            else -> error("Unsupported hands-free intent provider ${route.primaryProvider}")
         }
 
         parse(result.textContent.orEmpty())
+    }
+
+    private fun resolveRoute(catalog: ModelCatalog, selected: String): Route {
+        val selectedEntry = catalog.resolve(selected)
+        require(
+            selectedEntry.provider == LLMProvider.OPENAI_CODEX ||
+                selectedEntry.provider == LLMProvider.OPENAI_API
+        ) {
+            "Hands-free intent gate requires an OpenAI ChatGPT/API model; selected model '$selected' uses ${selectedEntry.provider}."
+        }
+
+        val auth = AuthStoreHolder.get(appContext)
+        val oauthEntry = when (selectedEntry.provider) {
+            LLMProvider.OPENAI_CODEX -> selectedEntry
+            LLMProvider.OPENAI_API -> catalog.modelsFor(LLMProvider.OPENAI_CODEX)
+                .firstOrNull { it.modelId == selectedEntry.modelId }
+            else -> null
+        }
+        val apiEntry = when (selectedEntry.provider) {
+            LLMProvider.OPENAI_API -> selectedEntry
+            LLMProvider.OPENAI_CODEX -> catalog.modelsFor(LLMProvider.OPENAI_API)
+                .firstOrNull { it.modelId == selectedEntry.modelId }
+            else -> null
+        }
+
+        val oauthReady = oauthEntry != null && runCatching {
+            auth.has(LLMProvider.OPENAI_CODEX)
+        }.getOrDefault(false)
+        val apiReady = apiEntry != null && runCatching {
+            auth.has(LLMProvider.OPENAI_API)
+        }.getOrDefault(false)
+
+        if (oauthReady) {
+            return Route(
+                primaryModel = oauthEntry!!.name,
+                primaryProvider = LLMProvider.OPENAI_CODEX,
+                apiFallbackModel = apiEntry?.takeIf { apiReady }?.name,
+            )
+        }
+
+        if (selectedEntry.provider == LLMProvider.OPENAI_API && apiReady) {
+            return Route(
+                primaryModel = apiEntry!!.name,
+                primaryProvider = LLMProvider.OPENAI_API,
+                apiFallbackModel = null,
+            )
+        }
+
+        if (selectedEntry.provider == LLMProvider.OPENAI_CODEX) {
+            throw IllegalStateException("ChatGPT sign-in is required for the hands-free intent gate")
+        }
+
+        throw IllegalStateException("OpenAI API key is required for the hands-free intent gate")
     }
 
     private suspend fun clientFor(catalog: ModelCatalog, model: String): LLMClient {
@@ -151,13 +198,10 @@ internal class HandsFreeIntentGate(
     }
 
     companion object {
-        @Volatile private var activeFallbackModel: String? = null
+        @Volatile private var activeExecutionModel: String? = null
 
-        /**
-         * API model selected by the most recent OAuth rate-limit fallback. Agent execution uses
-         * the same route so the intent gate cannot succeed and then immediately die on OAuth.
-         */
-        fun activeApiFallbackModel(): String? = activeFallbackModel
+        /** Model the next hands-free AgentSession must use to match the successful intent route. */
+        fun activeExecutionModel(): String? = activeExecutionModel
 
         private val PROMPT = """
             You are the turn-completion and intent gate for a hands-free driving assistant.
