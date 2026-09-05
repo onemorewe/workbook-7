@@ -96,25 +96,21 @@ jobs:
 
       - name: Generate synthetic Hey Jarvis speech fixture
         run: |
-          if ! command -v espeak-ng >/dev/null 2>&1; then
-            sudo apt-get update -qq
-            sudo apt-get install -y espeak-ng ffmpeg
-          fi
-          test -x "$(command -v ffmpeg)" || { echo 'ffmpeg missing'; exit 1; }
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg
+          python3 -m pip install --quiet edge-tts
           OUT="$GITHUB_WORKSPACE/closepaw/app/src/androidTest/assets/hey_jarvis_test.pcm"
           : > "$OUT"
           i=0
-          for spec in "en-us 135 35" "en-us 155 50" "en-us 175 65" "en-gb 140 40" "en-gb 165 60"; do
-            set -- $spec
-            voice="$1"; speed="$2"; pitch="$3"
-            espeak-ng -v "$voice" -s "$speed" -p "$pitch" -w "/tmp/jarvis-$i.wav" "Hey Jarvis"
-            ffmpeg -v error -y -i "/tmp/jarvis-$i.wav" -ar 24000 -ac 1 -f s16le "/tmp/jarvis-$i.pcm"
+          for voice in en-US-GuyNeural en-US-JennyNeural en-US-ChristopherNeural en-GB-RyanNeural en-GB-SoniaNeural; do
+            python3 -m edge_tts --voice "$voice" --text "Hey Jarvis" --write-media "/tmp/jarvis-$i.mp3"
+            ffmpeg -v error -y -i "/tmp/jarvis-$i.mp3" -ar 24000 -ac 1 -f s16le "/tmp/jarvis-$i.pcm"
             cat "/tmp/jarvis-$i.pcm" >> "$OUT"
             dd if=/dev/zero bs=48000 count=1 status=none >> "$OUT"
             i=$((i+1))
           done
           test -s "$OUT"
-          echo "Synthetic wake fixture bytes: $(wc -c < "$OUT")"
+          echo "Synthetic neural wake fixture bytes: $(wc -c < "$OUT")"
 
       - name: Run unit tests
         working-directory: closepaw
