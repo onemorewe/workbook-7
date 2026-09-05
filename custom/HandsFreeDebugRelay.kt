@@ -35,19 +35,27 @@ internal object HandsFreeDebugRelay {
         .callTimeout(5, TimeUnit.SECONDS)
         .build()
     private val sequence = AtomicLong(0)
+    private val configureLock = Any()
 
     @Volatile private var enabled = false
     @Volatile private var appVersion: String? = null
     @Volatile private var relaySessionId: String = UUID.randomUUID().toString()
 
+    /**
+     * Process-wide initialization. Multiple Android entry points may call this; repeated calls must
+     * not reset sequence/session correlation while the process is already alive.
+     */
     fun configure(context: Context) {
         val appContext = context.applicationContext
-        appVersion = runCatching {
-            appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionName
-        }.getOrNull()
-        relaySessionId = UUID.randomUUID().toString()
-        sequence.set(0)
-        enabled = true
+        synchronized(configureLock) {
+            appVersion = runCatching {
+                appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionName
+            }.getOrNull() ?: appVersion
+            if (enabled) return
+            relaySessionId = UUID.randomUUID().toString()
+            sequence.set(0)
+            enabled = true
+        }
         publish("relay", "debug relay online")
     }
 
@@ -60,12 +68,27 @@ internal object HandsFreeDebugRelay {
         return "$NTFY_BASE/$NTFY_TOPIC/json?poll=1&since=12h"
     }
 
-    fun publish(stage: String, message: String) {
+    fun publish(
+        stage: String,
+        message: String,
+        level: String = "info",
+        metadata: Map<String, Any?> = emptyMap(),
+    ) {
         if (!enabled) return
         val cleanStage = stage.take(80)
         val cleanMessage = sanitize(message)
+        val cleanLevel = level.lowercase().takeIf { it in setOf("debug", "info", "warn", "error") } ?: "info"
         val eventId = UUID.randomUUID().toString()
         val seq = sequence.incrementAndGet()
+        val cleanMetadata = JSONObject().put("source", "hands-free-android")
+        metadata.forEach { (key, value) ->
+            val cleanKey = key.take(80)
+            when (value) {
+                null -> cleanMetadata.put(cleanKey, JSONObject.NULL)
+                is Number, is Boolean -> cleanMetadata.put(cleanKey, value)
+                else -> cleanMetadata.put(cleanKey, sanitize(value.toString()).take(500))
+            }
+        }
 
         val privatePayload = JSONObject()
             .put("event_id", eventId)
@@ -74,9 +97,9 @@ internal object HandsFreeDebugRelay {
             .put("session_id", relaySessionId)
             .put("seq", seq)
             .put("stage", cleanStage)
-            .put("level", if (cleanStage == "error") "error" else "info")
+            .put("level", cleanLevel)
             .put("message", cleanMessage)
-            .put("metadata", JSONObject().put("source", "hands-free-android"))
+            .put("metadata", cleanMetadata)
             .toString()
 
         val ntfyPayload = JSONObject()
@@ -85,7 +108,9 @@ internal object HandsFreeDebugRelay {
             .put("session_id", relaySessionId)
             .put("seq", seq)
             .put("stage", cleanStage)
+            .put("level", cleanLevel)
             .put("message", cleanMessage)
+            .put("metadata", cleanMetadata)
             .toString()
 
         post(privatePayload, ntfyPayload)
