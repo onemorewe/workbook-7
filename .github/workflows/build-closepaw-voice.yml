@@ -138,6 +138,12 @@ jobs:
           python3 patch_handsfree_observability.py
           python3 patch_handsfree_wake_diagnostics.py
 
+      - name: Prefer ChatGPT OAuth for hands-free
+        run: |
+          cp patch_handsfree_oauth_primary.py closepaw/patch_handsfree_oauth_primary.py
+          cd closepaw
+          python3 patch_handsfree_oauth_primary.py
+
       - name: Inject private trace write token when configured
         env:
           TRACE_WRITE_TOKEN: ${{ secrets.TRACE_WRITE_TOKEN }}
