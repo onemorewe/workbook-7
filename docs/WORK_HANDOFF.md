@@ -32,10 +32,12 @@ After accepting an intent, the agent should announce what it understood before e
 4. Server VAD / final transcription marks a completed utterance.
 5. Transcript goes to the intent gate.
 6. Intent gate returns either `NOT_READY` or a normalized executable intent. It must not return `READY`.
-7. Intent reasoning should use the selected ChatGPT/Codex OAuth model and subscription allowance when available. Do not silently switch text reasoning to API-key billing.
-8. Accepted intent is shown on screen and spoken with TTS.
-9. Hands-free prototype actions auto-approve ClosePaw approvals so invisible approval dialogs do not block execution. Android system permissions are still required.
-10. Accepted intent enters the normal ClosePaw session/agent/tool pipeline.
+7. Intent reasoning prefers the selected ChatGPT/Codex OAuth model and subscription allowance. If that exact route fails with a real rate/usage limit (`RateLimitException`, including HTTP 429 / usage-limit responses), retry once through the mirrored OpenAI API-key model with the same underlying `modelId`. Do not fallback for unrelated auth/network/application errors.
+8. When the intent gate activates API fallback, the hands-free ClosePaw execution session must use the same API mirror; otherwise the gate could succeed and the agent would immediately fail on the exhausted OAuth route. Existing hands-free sessions are reusable only if their effective model matches the currently desired route.
+9. A successful OAuth intent request clears the active API fallback automatically, so hands-free returns to subscription routing when the limit is available again.
+10. Accepted intent is shown on screen and spoken with TTS.
+11. Hands-free prototype actions auto-approve ClosePaw approvals so invisible approval dialogs do not block execution. Android system permissions are still required.
+12. Accepted intent enters the normal ClosePaw session/agent/tool pipeline.
 
 The ordinary mic-button path is separate from hands-free.
 
@@ -120,11 +122,7 @@ The existing backend unit tests and Postgres permission/deduplication tests rema
 
 The public repository contains only the placeholder `__TRACE_WRITE_TOKEN__`, not the real device credential. Private transport stays dormant while the placeholder is present. ntfy remains enabled.
 
-GitHub Actions knows how to replace `__TRACE_WRITE_TOKEN__` from repository secret `TRACE_WRITE_TOKEN` during the build without printing the credential. The workflow validates token format before replacement and logs only whether injection happened, never the value.
-
-On 2026-09-05 the current S24 Ultra write credential was rotated: the old write hash was removed from `private_trace_tokens`, and a new write hash was registered for device `s24-ultra`. The plaintext was handed directly to the user for one-time provisioning as repository Actions secret `TRACE_WRITE_TOKEN`; never record the plaintext in this handoff, repository, issue, logs, or traces.
-
-Until `TRACE_WRITE_TOKEN` is actually added to GitHub repository Actions secrets, CI leaves the placeholder in place and the APK uses ntfy fallback only.
+GitHub Actions knows how to replace `__TRACE_WRITE_TOKEN__` from repository secret `TRACE_WRITE_TOKEN` during the build without printing the credential. The GitHub connector available to this agent cannot create repository Actions secrets; it must be provisioned through GitHub Actions Secrets by the user/authorized automation. Until it exists, CI explicitly leaves the placeholder in place and the APK uses ntfy fallback only.
 
 Do not commit the plaintext write credential. Provision it at build time or through another private device-provisioning path.
 
@@ -181,7 +179,7 @@ Required gates before distributing a new APK:
 - APK signature verification;
 - artifact upload.
 
-At the beginning of this continuation, branch HEAD `1ad9915b094ec979c429043ea9a1668e1105840d` had fully green GitHub Actions run **54**. Subsequent commits for the deployed registry/functions/Android dual-write have triggered newer CI runs; check the latest run before distributing any APK.
+At the beginning of this continuation, branch HEAD `1ad9915b094ec979c429043ea9a1668e1105840d` had fully green GitHub Actions run **54**. Subsequent commits for the deployed registry/functions/Android dual-write/wake diagnostics/API fallback have triggered newer CI runs; check the latest run before distributing any APK.
 
 ## Wake failure investigation — 2026-09-05
 
@@ -205,23 +203,39 @@ New diagnostic patch `patch_handsfree_wake_diagnostics.py` is applied after exis
 - explicit `wake-detected` event;
 - visible `Слушаю…` text immediately after wake;
 - existing wake-start beep remains;
-- second short acknowledgement tone when server VAD/final transcription says the utterance ended.
+- second short acknowledgement tone when server VAD/final transcription says the utterance ended;
+- propagation of the intent gate's active API fallback model into the actual hands-free AgentSession.
 
 The pinned `Hey Jarvis` model manifest uses `probability_cutoff = 0.97` and a sliding window size of 5. Do not lower this blindly yet. First inspect real Samsung heartbeat `wake_peak` values. If microphone PCM is healthy but real speech consistently peaks below 0.97, tune threshold/frontend from evidence rather than guessing.
 
 The existing synthetic CI test is useful but weak for real-device sensitivity because it only requires at least one of several concatenated neural voices to trigger. Real Samsung capture/frontend behavior still needs the new heartbeat data.
 
+## OAuth usage-limit fallback — 2026-09-05
+
+The user explicitly requested automatic API fallback because the ChatGPT/Codex subscription rate/usage limit is currently exhausted.
+
+Implementation rules:
+
+- `custom/HandsFreeIntentGate.kt` catches `RateLimitException` from the selected `OPENAI_CODEX` model only.
+- It finds the `OPENAI_API` catalog entry with the same underlying `modelId` (for example `gpt-5.5-codex -> gpt-5.5`).
+- It requires the existing OpenAI API key, retries the intent classification once through that API model, and emits `intent-gate-fallback` diagnostics.
+- It records the active fallback model so the subsequent hands-free AgentSession uses that API model too.
+- A running hands-free session is not reused if its effective main model differs from the currently desired OAuth/API route.
+- A later successful OAuth intent classification clears the active fallback and restores subscription routing automatically.
+- Do not broaden this fallback to arbitrary exceptions. Broken credentials, network failures, malformed responses, and unrelated errors should remain visible rather than silently charging API billing.
+
 ## Immediate next steps
 
 1. Let the latest branch CI finish and fix any failure before release.
-2. Add the freshly rotated device write credential as GitHub repository Actions secret named exactly `TRACE_WRITE_TOKEN`.
-3. Trigger a new branch workflow run/commit after the secret exists so the APK is built with private ingest enabled.
-4. Run `trace-backend/scripts/round-trip.mjs` from an environment with outbound network access against the deployed functions.
-5. Configure the existing owner-only Site with the real `TRACE_READ_URL` and separate read credential.
-6. Install the resulting stable-signed APK over the existing stable-signed build; do not uninstall.
+2. Provision the device write credential privately as GitHub Actions secret `TRACE_WRITE_TOKEN`; never commit it.
+3. Run `trace-backend/scripts/round-trip.mjs` from an environment with outbound network access against the deployed functions.
+4. Configure the existing owner-only Site with the real `TRACE_READ_URL` and separate read credential.
+5. Build a stable-signed APK with private ingest enabled.
+6. Install over the existing stable-signed build; do not uninstall.
 7. With the phone idle in hands-free, inspect heartbeat first. `pcm_peak` proves microphone signal; `wake_peak` versus cutoff identifies model sensitivity. Then say `Hey Jarvis` and require `wake-detected` + first beep before testing STT/intent.
-8. Trigger a known Samsung hands-free event and verify its event ID/app version/time in private Supabase storage.
-9. Keep ntfy until that real-phone event is confirmed.
-10. Add richer run/session/tool/LLM/outcome correlation so a report such as `Jarvis не сработал примерно сейчас` can be diagnosed remotely with no user log extraction.
+8. Because the subscription limit is currently exhausted, verify that a recognized command produces `intent-gate-fallback` and that the resulting AgentSession starts on the mirrored API model rather than the Codex OAuth model.
+9. Trigger a known Samsung hands-free event and verify its event ID/app version/time in private Supabase storage.
+10. Keep ntfy until that real-phone event is confirmed.
+11. Add richer run/session/tool/LLM/outcome correlation so a report such as `Jarvis не сработал примерно сейчас` can be diagnosed remotely with no user log extraction.
 
 Priority remains working hands-free behavior, observability, clear statuses, private traces, and self-service debugging—not cosmetic architecture work.
