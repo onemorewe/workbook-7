@@ -4,7 +4,6 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.provider.Settings
-import android.speech.tts.TextToSpeech
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -85,7 +84,7 @@ internal fun VoiceRuntimeSettingsPage(
 
     val wakeWord = remember(context) { readWakeWordLabel(context) }
     val ttsEngine = remember(context) {
-        Settings.Secure.getString(context.contentResolver, TextToSpeech.Engine.DEFAULT_ENGINE)
+        Settings.Secure.getString(context.contentResolver, "tts_default_synth")
             ?.takeIf { it.isNotBlank() }
             ?: "Android default TTS"
     }
