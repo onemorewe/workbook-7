@@ -10,6 +10,24 @@ def replace_once(path: Path, old: str, new: str):
     path.write_text(text.replace(old, new, 1), encoding='utf-8')
 
 
+# Configure private diagnostics from app/activity and Accessibility lifecycles too. The relay must
+# work even when the hands-free service itself is the thing that failed to start.
+main = root / 'app/src/main/kotlin/ai/closepaw/app/MainActivity.kt'
+replace_once(
+    main,
+    '''    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+''',
+    '''    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        ai.closepaw.ui.capsule.voice.HandsFreeDebugRelay.configure(this)
+        ai.closepaw.ui.capsule.voice.HandsFreeDebugRelay.publish(
+            stage = "main-activity-created",
+            message = "MainActivity created",
+        )
+''',
+)
+
 # Hands-free sessions: no action approval prompts, and tracing is always on.
 agent = root / 'app/src/main/kotlin/ai/closepaw/app/AgentService.kt'
 text = agent.read_text(encoding='utf-8')
@@ -20,6 +38,37 @@ if 'import ai.closepaw.protocol.ApprovalMode\n' not in text:
         1,
     )
 agent.write_text(text, encoding='utf-8')
+
+replace_once(
+    agent,
+    '''    override fun onServiceConnected() {
+        super.onServiceConnected()
+''',
+    '''    override fun onServiceConnected() {
+        super.onServiceConnected()
+        ai.closepaw.ui.capsule.voice.HandsFreeDebugRelay.configure(this)
+        ai.closepaw.ui.capsule.voice.HandsFreeDebugRelay.publish(
+            stage = "agent-service-connected",
+            message = "Accessibility AgentService connected",
+        )
+''',
+)
+replace_once(
+    agent,
+    '''    override fun onInterrupt() {
+        Log.w(TAG, "AgentService interrupted")
+    }
+''',
+    '''    override fun onInterrupt() {
+        Log.w(TAG, "AgentService interrupted")
+        ai.closepaw.ui.capsule.voice.HandsFreeDebugRelay.publish(
+            stage = "agent-service-interrupted",
+            level = "warn",
+            message = "Accessibility AgentService interrupted",
+        )
+    }
+''',
+)
 
 replace_once(
     agent,
@@ -128,7 +177,6 @@ replace_once(
         super.onDestroy()
 ''',
     '''        HandsFreeDebugRelay.publish("voice", "hands-free service destroyed")
-        HandsFreeDebugRelay.disable()
         scope.cancel()
         super.onDestroy()
 ''',
