@@ -46,6 +46,12 @@ jobs:
           cd closepaw
           python3 patch_closepaw_voice.py
 
+      - name: Add voice UX improvements
+        run: |
+          cp patch_voice_ux.py closepaw/patch_voice_ux.py
+          cd closepaw
+          python3 patch_voice_ux.py
+
       - name: Set custom version
         working-directory: closepaw
         run: |
