@@ -2,6 +2,7 @@ package ai.closepaw.ui.capsule.voice
 
 import android.Manifest
 import android.content.Intent
+import ai.closepaw.onboarding.OnboardingStore
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
@@ -20,6 +21,8 @@ class VoiceRuntimeUiInstrumentedTest : TestCase() {
         val context = instrumentation.targetContext
         val device = UiDevice.getInstance(instrumentation)
 
+        // This test targets the post-onboarding production UI, not the onboarding wizard itself.
+        OnboardingStore(context).setCompleted()
         runCatching {
             instrumentation.uiAutomation.grantRuntimePermission(
                 context.packageName,
@@ -32,11 +35,9 @@ class VoiceRuntimeUiInstrumentedTest : TestCase() {
         launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         context.startActivity(launch)
 
-        assertNotNull(
-            "Chat header never appeared",
-            device.wait(Until.findObject(By.desc("Open menu")), 10_000L),
-        )
-        device.findObject(By.desc("Open menu")).click()
+        val menu = device.wait(Until.findObject(By.desc("Open menu")), 10_000L)
+        assertNotNull("Chat header never appeared after onboarding was marked complete", menu)
+        menu.click()
 
         val settings = device.wait(Until.findObject(By.text("Settings")), 5_000L)
         assertNotNull("Settings row not found in navigation drawer", settings)
