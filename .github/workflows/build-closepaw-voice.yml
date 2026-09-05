@@ -93,11 +93,13 @@ jobs:
           cp patch_handsfree_fix.py closepaw/patch_handsfree_fix.py
           cp patch_microwakeword_build.py closepaw/patch_microwakeword_build.py
           cp patch_handsfree_safety_panel.py closepaw/patch_handsfree_safety_panel.py
+          cp patch_handsfree_start_order.py closepaw/patch_handsfree_start_order.py
           cd closepaw
           python3 patch_handsfree_integration.py
           python3 patch_handsfree_fix.py
           python3 patch_microwakeword_build.py
           python3 patch_handsfree_safety_panel.py
+          python3 patch_handsfree_start_order.py
 
       - name: Run unit tests
         working-directory: closepaw
