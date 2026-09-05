@@ -176,3 +176,41 @@ Key risks: semantic success verification, generalization, state explosion, priva
 ## Immediate next step
 
 Connect/deploy the private trace backend, obtain a real HTTPS ingest endpoint plus safe write credential, patch `HandsFreeDebugRelay` to send there (optionally dual-write to ntfy during migration), validate events from emulator and then real device, and build the private owner-only trace dashboard.
+
+## Work continuation — 2026-09-05
+
+This section supersedes the older deployment status above; the product architecture and Android signing rules remain unchanged.
+
+### Verified starting point
+
+- Checked branch HEAD `6d7d3bd574994c3f38390b4e9fcb7d5e9f8ac9c7` directly.
+- Run **53** (`33979733065`) completed successfully, including unit tests, synthetic wake/emulator UI, release signing and signature verification. Run 48 is no longer the latest verified build.
+- This is a **patch/build repository**, not the full upstream Android source. CI clones `imoonkey/closepaw`, copies `custom/` and applies patch scripts in workflow order. Preserve their exact anchors when changing Android code.
+- The prepared ingest was unauthenticated. Do not deploy the old single-file implementation.
+
+### Implemented private backend
+
+- Bounded Web-standard handlers in `trace-backend/supabase/functions/_shared/trace.mjs`; thin Deno entrypoints for `trace-ingest` and `trace-read`.
+- Separate hashed token registries: device-scoped write credentials and read-only credentials. Missing/malformed config fails closed; expired tokens fail; caller-supplied device identity is ignored.
+- Server redaction covers nested objects/serialized JSON, auth/API/OAuth fields, known credentials, JWTs, credential-bearing URLs and private-key blocks. Never collect auth objects; redaction cannot guarantee finding arbitrary unlabeled secrets.
+- Additive migration `002_private_trace_contract.sql`: client-role grants revoked, RLS forced, per-device deduplication, run/sequence/level/duration columns and cursor indexes. Existing `001` is preserved.
+- The Site uses `TRACE_READ_URL` + `TRACE_READ_TOKEN` **server-side**. It does not need a service-role key. Supabase remains the database and ingest backend.
+- Actual streamed UTF-8 request size is bounded; retries acknowledge the original event without overwriting it. Read pagination preserves Postgres microseconds. No wildcard CORS or public read path.
+- Added handler tests and a real Postgres migration/RLS/deduplication CI gate before the Android build. `trace-backend/scripts/round-trip.mjs` checks deployed endpoints; unit tests are not a live round trip.
+
+### Dashboard source and identity
+
+- Site ID: `appgprj_6a9c4d88d5b08191b58f360a5982c9ed`; title **ClosePaw Trace Dashboard**, slug `closepaw-traces`.
+- Checkout: `/workspace/sites/closepaw-traces`; source is persisted through the Site's own Git repository. Reopen this exact Site through Sites tools; never create a replacement. `.openai/hosting.json` holds its identity.
+- Owner-only audience; every API call requires platform-authenticated identity. Render traces as inert text, never HTML/Markdown instructions.
+- Sessions, literal message search, stage/device/session/time filters, chronological timeline, stage summaries, durations/gaps, visible-tab refresh and separate session history loading are implemented. Ordinary queries cap at 2,000 rows; partial history is explicit.
+- A finished tool/search page is never labelled verified success. `outcome.metadata.semantic_success=true` is required; it is still a producer diagnostic claim, not automatic workflow promotion.
+
+### Deployment/access checkpoint
+
+- The user connected **Supabase** during this Work turn; installation was independently confirmed. **Do not ask them to connect it again.**
+- Despite confirmation, this running turn's tool registry exposed no Supabase commands (no project listing, SQL or Edge deployment). No Supabase CLI access token was present. This is not user refusal or missing authorization.
+- No Supabase project/reference, secrets, migration execution, deployed endpoint or live round trip has been verified. Rediscover connected Supabase tools in the next turn and continue via `trace-backend/README.md`.
+- Android transport stays unchanged until the real endpoint/auth check succeeds. ntfy remains current; no private event from the real phone is claimed.
+- After deployment, add Android event/run correlation, detailed stage/LLM/tool outcomes and heartbeat/queue diagnostics. Keep ntfy until an identified real Samsung event is visible in private storage.
+- Check current CI for the commit containing this continuation before distributing an artifact. The starting build 53 is not evidence that later commits passed.

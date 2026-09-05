@@ -3,13 +3,13 @@
 Build an owner-only ChatGPT Site named **ClosePaw Trace Dashboard**.
 
 ## Purpose
-Display remote hands-free trace events stored in Supabase. The Android app never reads from this Site. It writes to the public write-only Supabase Edge Function `trace-ingest`; the Site is only the private read/dashboard surface.
+Display remote hands-free trace events stored in Supabase. The Android app never reads from this Site. It writes to the network-reachable, authenticated write-only Supabase Edge Function `trace-ingest`; the Site is only the private read/dashboard surface.
 
 ## Access
 - Site audience: owner only.
 - Do not expose a public trace-read endpoint.
-- Store `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` as Site secrets; never embed them in client-side JavaScript or HTML.
-- All Supabase reads must happen server-side.
+- Store `TRACE_READ_URL` and a distinct `TRACE_READ_TOKEN` as server-only Site secrets. Only the Edge Functions hold `SUPABASE_SERVICE_ROLE_KEY`.
+- All Supabase reads must happen server-side through authenticated `trace-read`. Require platform-authenticated identity on every dashboard API route.
 
 ## Dashboard UI
 - Default view: events from the last 12 hours, newest first.

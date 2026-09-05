@@ -1,0 +1,9 @@
+project_id = "closepaw-traces"
+
+# Opaque scoped credentials are verified by our handlers, before any database access.
+# Never deploy these entrypoints without their authentication code.
+[functions.trace-ingest]
+verify_jwt = false
+
+[functions.trace-read]
+verify_jwt = false
