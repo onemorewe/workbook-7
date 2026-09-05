@@ -75,6 +75,19 @@ internal fun VoiceRuntimeSettingsPage(
             else -> runCatching { authStore?.has(agentProvider) == true }.getOrDefault(false)
         }
     }
+    val oauthMirror = when (agentProvider) {
+        LLMProvider.OPENAI_CODEX -> agentEntry
+        LLMProvider.OPENAI_API -> agentEntry?.let { entry ->
+            modelCatalog.modelsFor(LLMProvider.OPENAI_CODEX)
+                .firstOrNull { it.modelId == entry.modelId }
+        }
+        else -> null
+    }
+    val oauthConnected = remember(oauthMirror?.name, runtimeStatus) {
+        oauthMirror != null && runCatching {
+            authStore?.has(LLMProvider.OPENAI_CODEX) == true
+        }.getOrDefault(false)
+    }
 
     val normalMicEffective = when {
         voiceModel == VoiceTranscriptionSettings.SYSTEM -> "Android system speech"
@@ -140,12 +153,14 @@ internal fun VoiceRuntimeSettingsPage(
 
             SettingsSection(title = "Hands-free") {
                 val gateReady = when (agentProvider) {
-                    LLMProvider.OPENAI_CODEX -> agentCredentialPresent && openAiKeyConnected
-                    LLMProvider.OPENAI_API -> agentCredentialPresent
+                    LLMProvider.OPENAI_CODEX -> oauthConnected && openAiKeyConnected
+                    LLMProvider.OPENAI_API -> openAiKeyConnected
                     else -> false
                 }
                 val gateDescription = when {
                     !gateReady -> "unavailable with current agent auth"
+                    agentProvider == LLMProvider.OPENAI_API && oauthConnected && oauthMirror != null ->
+                        "${oauthMirror.name} · ChatGPT subscription → $effectiveAgentModel · API fallback on usage limit"
                     agentProvider == LLMProvider.OPENAI_API -> "$effectiveAgentModel · OpenAI API"
                     else -> "$effectiveAgentModel · ChatGPT subscription · API fallback on usage limit"
                 }
