@@ -2,7 +2,7 @@ name: Build ClosePaw GPT Voice
 
 on:
   push:
-    branches: [main, alyosha-live-intent, alyosha-microwakeword]
+    branches: [main, alyosha-live-intent, alyosha-microwakeword, handsfree-crash-runtime-panel]
   workflow_dispatch:
 
 permissions:
@@ -11,7 +11,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - name: Checkout patch repo
         uses: actions/checkout@v4
@@ -55,6 +55,8 @@ jobs:
       - name: Add hands-free live intent mode
         run: |
           mkdir -p closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice
+          mkdir -p closepaw/app/src/main/kotlin/ai/closepaw/ui/settings
+          mkdir -p closepaw/app/src/androidTest/kotlin/ai/closepaw/ui/capsule/voice
           cp custom/HandsFreeCommandParser.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/HandsFreeCommandParser.kt
           cp custom/HandsFreeVoiceService.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/HandsFreeVoiceService.kt
           cp custom/HandsFreeSpeaker.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/HandsFreeSpeaker.kt
@@ -62,6 +64,8 @@ jobs:
           cp custom/MicroFrontend.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/MicroFrontend.kt
           cp custom/RealtimeCommandTranscriber.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/RealtimeCommandTranscriber.kt
           cp custom/HandsFreeIntentGate.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/HandsFreeIntentGate.kt
+          cp custom/VoiceRuntimeSettingsPage.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/settings/VoiceRuntimeSettingsPage.kt
+          cp custom/HandsFreeSafetyInstrumentedTest.kt closepaw/app/src/androidTest/kotlin/ai/closepaw/ui/capsule/voice/HandsFreeSafetyInstrumentedTest.kt
 
           # Reuse the proven Android microWakeWord frontend implementation from a pinned Apache-2.0
           # Teya revision. It vendors the Apache-2.0 TFLite-Micro frontend plus BSD-3-Clause kissfft.
@@ -88,14 +92,32 @@ jobs:
           cp patch_handsfree_integration.py closepaw/patch_handsfree_integration.py
           cp patch_handsfree_fix.py closepaw/patch_handsfree_fix.py
           cp patch_microwakeword_build.py closepaw/patch_microwakeword_build.py
+          cp patch_handsfree_safety_panel.py closepaw/patch_handsfree_safety_panel.py
           cd closepaw
           python3 patch_handsfree_integration.py
           python3 patch_handsfree_fix.py
           python3 patch_microwakeword_build.py
+          python3 patch_handsfree_safety_panel.py
 
       - name: Run unit tests
         working-directory: closepaw
         run: ./gradlew :app:testDebugUnitTest --stacktrace
+
+      - name: Enable KVM for Android emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run hands-free Android smoke tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          working-directory: closepaw
+          script: ./gradlew :app:connectedDebugAndroidTest --stacktrace -Pandroid.testInstrumentationRunnerArguments.class=ai.closepaw.ui.capsule.voice.HandsFreeSafetyInstrumentedTest
 
       - name: Set custom version
         working-directory: closepaw
