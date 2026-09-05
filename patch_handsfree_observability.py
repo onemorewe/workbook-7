@@ -247,7 +247,8 @@ replace_once(
 ''',
 )
 
-# Expose the random read URL in Voice & Runtime.
+# Expose the debug URL in Voice & Runtime. Anchor only on the section itself so this patch does not
+# care whether the panel computes gate readiness from OAuth, API, or an OAuth-first mirror route.
 settings = root / 'app/src/main/kotlin/ai/closepaw/ui/settings/VoiceRuntimeSettingsPage.kt'
 text = settings.read_text(encoding='utf-8')
 if 'import ai.closepaw.ui.capsule.voice.HandsFreeDebugRelay\n' not in text:
@@ -261,13 +262,9 @@ settings.write_text(text, encoding='utf-8')
 replace_once(
     settings,
     '''            SettingsSection(title = "Hands-free") {
-                val gateReady = agentProvider == LLMProvider.OPENAI_CODEX && agentCredentialPresent
-                RuntimeCard(
 ''',
     '''            SettingsSection(title = "Hands-free") {
-                val gateReady = agentProvider == LLMProvider.OPENAI_CODEX && agentCredentialPresent
                 val debugUrl = remember(context, runtimeStatus) { HandsFreeDebugRelay.readUrl(context) }
-                RuntimeCard(
 ''',
 )
 replace_once(
