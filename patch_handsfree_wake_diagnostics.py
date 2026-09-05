@@ -177,4 +177,45 @@ replace_once(
 ''',
 )
 
-print('Hands-free wake diagnostics + audio cues applied')
+# If the intent gate discovers that ChatGPT/Codex is usage-limited, execution must use the same
+# mirrored API model. Otherwise the gate would succeed via API and the agent would immediately fail
+# again on the exhausted OAuth route. A session is reusable only if it already has the desired model.
+agent = root / 'app/src/main/kotlin/ai/closepaw/app/AgentService.kt'
+replace_once(
+    agent,
+    '''        val current = session
+        val reusableHandsFreeSession = current != null &&
+            current.state.value != SessionState.Shutdown &&
+            current.getServices().config.approvalMode == ApprovalMode.AUTO_APPROVE &&
+            current.getServices().config.traceEnabled
+''',
+    '''        val current = session
+        val desiredHandsFreeModel =
+            ai.closepaw.ui.capsule.voice.HandsFreeIntentGate.activeApiFallbackModel()
+                ?: AppSettingsStore(this).load().selectedModel
+        val reusableHandsFreeSession = current != null &&
+            current.state.value != SessionState.Shutdown &&
+            current.getServices().config.approvalMode == ApprovalMode.AUTO_APPROVE &&
+            current.getServices().config.traceEnabled &&
+            current.effectiveMainModel() == desiredHandsFreeModel
+''',
+)
+replace_once(
+    agent,
+    '''                "starting fresh hands-free session: auto-approve=true trace=true",
+''',
+    '''                "starting fresh hands-free session: model=$desiredHandsFreeModel auto-approve=true trace=true",
+''',
+)
+replace_once(
+    agent,
+    '''                                mainModel = settings.selectedModel,
+''',
+    '''                                mainModel = if (handsFree) {
+                                    ai.closepaw.ui.capsule.voice.HandsFreeIntentGate.activeApiFallbackModel()
+                                        ?: settings.selectedModel
+                                } else settings.selectedModel,
+''',
+)
+
+print('Hands-free wake diagnostics + audio cues + API fallback execution routing applied')
