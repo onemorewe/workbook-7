@@ -17,6 +17,8 @@ Never commit the keystore or passwords to this repository.
 
 The workflow gives each build an increasing custom `versionCode` (`100000 + github.run_number`) and builds `assembleRelease`. The resulting signed APK is uploaded as a GitHub Actions artifact.
 
+Any push to `main` triggers a build, so ChatGPT can start a new build by committing a harmless repository change when needed.
+
 ## One-time migration
 
 The first custom-signed APK cannot update an APK signed by the upstream ClosePaw key or a previous debug key. Uninstall the old build once, install the first custom-signed build, configure it, and then keep installing future custom-signed APKs over it without uninstalling.
