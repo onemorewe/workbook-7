@@ -52,6 +52,20 @@ jobs:
           cd closepaw
           python3 patch_voice_ux.py
 
+      - name: Add hands-free Alyosha mode
+        run: |
+          mkdir -p closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice
+          cp custom/HandsFreeCommandParser.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/HandsFreeCommandParser.kt
+          cp custom/HandsFreeVoiceService.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/HandsFreeVoiceService.kt
+          cp custom/HandsFreeSpeaker.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/HandsFreeSpeaker.kt
+          cp patch_handsfree_integration.py closepaw/patch_handsfree_integration.py
+          cd closepaw
+          python3 patch_handsfree_integration.py
+
+      - name: Run unit tests
+        working-directory: closepaw
+        run: ./gradlew :app:testDebugUnitTest --stacktrace
+
       - name: Set custom version
         working-directory: closepaw
         run: |
