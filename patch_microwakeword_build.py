@@ -31,13 +31,20 @@ replace_once(
     '    }\n',
 )
 
-# The first microWakeWord APK is an English control model only. The runtime is exactly the one that
-# will host the trained Alyosha model; keeping this label truthful prevents accidental test confusion.
+# This branch intentionally carries the known-good English “Hey Jarvis” model as an A/B control.
+# The final Russian Alyosha model will use this exact same runtime, so do not present the control APK
+# as though its trigger were already “Алёша”.
 settings = root / 'app/src/main/kotlin/ai/closepaw/ui/settings/LlmAuthSettingsPage.kt'
 text = settings.read_text(encoding='utf-8')
 text = text.replace(
     'Text("Hands-free wake: local Russian model • no cloud audio before “Алёша”", style = MaterialTheme.typography.bodySmall)',
-    'Text("Hands-free wake: local microWakeWord • no cloud audio before wake", style = MaterialTheme.typography.bodySmall)',
+    'Text("Hands-free wake: microWakeWord “Hey Jarvis” control • fully local", style = MaterialTheme.typography.bodySmall)',
+)
+text = text.replace('"Turn off hands-free “Алёша”"', '"Turn off hands-free wake"')
+text = text.replace('"Turn on hands-free “Алёша”"', '"Turn on hands-free wake"')
+text = text.replace(
+    '"Idle audio stays local. After “Алёша”, live transcript appears in the main input. Each server-VAD pause is checked by the subscription model; it returns NOT_READY or the normalized intent. Final agent answers are read aloud."',
+    '"Idle audio stays local. This control build wakes on “Hey Jarvis”. After wake, live transcript appears in the main input. Each server-VAD pause is checked by the subscription model; it returns NOT_READY or the normalized intent. Final agent answers are read aloud."',
 )
 settings.write_text(text, encoding='utf-8')
 
