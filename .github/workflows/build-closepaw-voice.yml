@@ -70,8 +70,14 @@ jobs:
           test -n "$KEY_ALIAS" || { echo 'Missing KEY_ALIAS'; exit 1; }
           test -n "$KEY_PASSWORD" || { echo 'Missing KEY_PASSWORD'; exit 1; }
 
-      - name: Clone ClosePaw
-        run: git clone --depth 1 https://github.com/imoonkey/closepaw.git closepaw
+      - name: Clone pinned ClosePaw
+        run: |
+          git init closepaw
+          git -C closepaw remote add origin https://github.com/imoonkey/closepaw.git
+          git -C closepaw fetch --depth 1 origin 75dae2653f5a6b25d5df51ee7008b0f830de1536
+          git -C closepaw checkout --detach FETCH_HEAD
+          test "$(git -C closepaw rev-parse HEAD)" = "75dae2653f5a6b25d5df51ee7008b0f830de1536"
+          echo "Pinned ClosePaw upstream 75dae2653f5a6b25d5df51ee7008b0f830de1536"
 
       - name: Add GPT voice transcription
         run: |
@@ -154,6 +160,26 @@ jobs:
           else:
               print('TRACE_WRITE_TOKEN is not configured; ntfy fallback remains active')
           PY
+
+      - name: Verify deployed private trace ingest
+        env:
+          TRACE_WRITE_TOKEN: ${{ secrets.TRACE_WRITE_TOKEN }}
+        run: |
+          test -n "$TRACE_WRITE_TOKEN" || { echo 'TRACE_WRITE_TOKEN missing; cannot verify private ingest'; exit 1; }
+          EVENT_ID=$(python3 -c 'import uuid; print(uuid.uuid4())')
+          TS=$(python3 -c 'import time; print(int(time.time()*1000))')
+          PAYLOAD=$(python3 -c 'import json,os; print(json.dumps({"event_id":os.environ["EVENT_ID"],"ts":int(os.environ["TS"]),"app_version":"ci-preflight-${{ github.run_number }}","session_id":"ci-${{ github.run_number }}","seq":1,"stage":"ci-private-trace-preflight","level":"info","message":"GitHub Actions private trace ingest preflight","metadata":{"source":"github-actions","run_number":${{ github.run_number }}}}))' EVENT_ID="$EVENT_ID" TS="$TS")
+          HTTP=$(curl -sS --connect-timeout 10 --max-time 20 -o /tmp/trace-ingest-response -w '%{http_code}' \
+            -H "Authorization: Bearer $TRACE_WRITE_TOKEN" \
+            -H 'Content-Type: application/json' \
+            --data "$PAYLOAD" \
+            'https://qglsnnnshefwnrzsbeko.supabase.co/functions/v1/trace-ingest')
+          if [ "$HTTP" != "202" ]; then
+            echo "Private trace ingest preflight failed: HTTP $HTTP"
+            cat /tmp/trace-ingest-response
+            exit 1
+          fi
+          echo 'Private trace ingest preflight accepted (HTTP 202)'
 
       - name: Generate synthetic Hey Jarvis speech fixture
         run: |
