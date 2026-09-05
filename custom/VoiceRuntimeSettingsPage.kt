@@ -139,14 +139,23 @@ internal fun VoiceRuntimeSettingsPage(
             }
 
             SettingsSection(title = "Hands-free") {
-                val gateReady = agentProvider == LLMProvider.OPENAI_CODEX && agentCredentialPresent
+                val gateReady = when (agentProvider) {
+                    LLMProvider.OPENAI_CODEX -> agentCredentialPresent && openAiKeyConnected
+                    LLMProvider.OPENAI_API -> agentCredentialPresent
+                    else -> false
+                }
+                val gateDescription = when {
+                    !gateReady -> "unavailable with current agent auth"
+                    agentProvider == LLMProvider.OPENAI_API -> "$effectiveAgentModel · OpenAI API"
+                    else -> "$effectiveAgentModel · ChatGPT subscription · API fallback on usage limit"
+                }
                 RuntimeCard(
                     title = if (handsFreeEnabled) "ON" else "OFF",
                     lines = listOf(
                         "Runtime: $runtimeStatus",
                         "Wake: microWakeWord · $wakeWord · local only",
                         "Live STT: gpt-live-transcribe · ${if (openAiKeyConnected) "OpenAI API key connected" else "OpenAI API key missing"}",
-                        "Intent gate: ${if (gateReady) "$effectiveAgentModel · ChatGPT subscription" else "unavailable with current agent auth"}",
+                        "Intent gate: $gateDescription",
                         "Answer voice: Android TTS · $ttsEngine · language auto RU/EN",
                     ),
                 )
