@@ -1,9 +1,12 @@
 package ai.closepaw.ui.capsule.voice
 
+import androidx.annotation.Keep
+
 /**
  * JNI wrapper around TensorFlow Lite Micro's fixed-point microfrontend used by microWakeWord.
  * It converts 16 kHz mono PCM into one forty-bin feature vector every ten milliseconds.
  */
+@Keep
 internal class MicroFrontend(
     private val sampleRate: Int = SAMPLE_RATE,
     private val stepSizeMs: Int = STEP_SIZE_MS,
