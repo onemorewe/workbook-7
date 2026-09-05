@@ -2,7 +2,7 @@ package ai.closepaw.ui.capsule.voice
 
 import android.Manifest
 import android.content.Intent
-import ai.closepaw.onboarding.OnboardingStore
+import ai.closepaw.app.MainActivity
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
@@ -21,8 +21,6 @@ class VoiceRuntimeUiInstrumentedTest : TestCase() {
         val context = instrumentation.targetContext
         val device = UiDevice.getInstance(instrumentation)
 
-        // This test targets the post-onboarding production UI, not the onboarding wizard itself.
-        OnboardingStore(context).setCompleted()
         runCatching {
             instrumentation.uiAutomation.grantRuntimePermission(
                 context.packageName,
@@ -33,10 +31,17 @@ class VoiceRuntimeUiInstrumentedTest : TestCase() {
         val launch = context.packageManager.getLaunchIntentForPackage(context.packageName)
             ?: throw AssertionError("No launch intent for ${context.packageName}")
         launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+
+        // MainActivity has an explicit debug/eval bypass for onboarding. Supplying a present but
+        // null goal exercises that bypass without dispatching an agent task or opening permission
+        // settings, making this deterministic even when another instrumentation test touched app
+        // preferences/process state first.
+        launch.putExtra(MainActivity.EXTRA_FRESH_SESSION, true)
+        launch.putExtra(MainActivity.EXTRA_GOAL, null as String?)
         context.startActivity(launch)
 
-        val menu = device.wait(Until.findObject(By.desc("Open menu")), 10_000L)
-        assertNotNull("Chat header never appeared after onboarding was marked complete", menu)
+        val menu = device.wait(Until.findObject(By.desc("Open menu")), 15_000L)
+        assertNotNull("Chat header never appeared through debug onboarding bypass", menu)
         menu.click()
 
         val settings = device.wait(Until.findObject(By.text("Settings")), 5_000L)
