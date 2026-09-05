@@ -9,6 +9,18 @@ def replace_once(path: Path, old: str, new: str):
         raise SystemExit(f'Patch anchor not found in {path}: {old[:120]!r}')
     path.write_text(text.replace(old, new, 1), encoding='utf-8')
 
+# Vosk is used only for the local, always-on wake word. No idle audio leaves the phone.
+gradle = root / 'app/build.gradle.kts'
+replace_once(
+    gradle,
+    '    // OkHttp — used by CodexResponseClient for raw SSE streaming to chatgpt.com\n'
+    '    implementation("com.squareup.okhttp3:okhttp:4.12.0")\n',
+    '    // OkHttp — used by CodexResponseClient and hands-free Realtime WebSocket\n'
+    '    implementation("com.squareup.okhttp3:okhttp:4.12.0")\n\n'
+    '    // Local Russian wake-word recognizer. Constrained grammar; no network at runtime.\n'
+    '    implementation("com.alphacephei:vosk-android:0.3.75")\n',
+)
+
 # Manifest: microphone foreground service.
 manifest = root / 'app/src/main/AndroidManifest.xml'
 replace_once(
@@ -28,7 +40,9 @@ replace_once(
     '        <!-- Shizuku content provider for binder forwarding -->\n',
 )
 
-# Route wake-word commands into current session or start a new task.
+# Route a normalized hands-free intent into the current session or start a new task.
+# Also fix the upstream service-start path to use the user's selected model; otherwise it silently
+# falls back to SessionConfig's default model when hands-free starts a fresh agent session.
 service = root / 'app/src/main/kotlin/ai/closepaw/app/AgentService.kt'
 replace_once(service, 'import ai.closepaw.protocol.SessionConfig\n', 'import ai.closepaw.protocol.SessionConfig\nimport ai.closepaw.protocol.SessionState\n')
 replace_once(
@@ -56,6 +70,21 @@ replace_once(
 )
 replace_once(
     service,
+    '''                        SessionConfig(
+                                debugMode = true,
+                                traceEnabled = settings.traceEnabled,
+                                platformMode = platformMode
+                        )''',
+    '''                        SessionConfig(
+                                mainModel = settings.selectedModel,
+                                approvalMode = settings.approvalMode,
+                                debugMode = true,
+                                traceEnabled = settings.traceEnabled,
+                                platformMode = platformMode
+                        )''',
+)
+replace_once(
+    service,
     '        serviceScope.cancel()\n',
     '        ai.closepaw.ui.capsule.voice.HandsFreeSpeaker.shutdown()\n        serviceScope.cancel()\n',
 )
@@ -78,7 +107,35 @@ replace_once(
     '                    overlayController = { overlayController },\n                    speakAnswer = { answer -> ai.closepaw.ui.capsule.voice.HandsFreeSpeaker.speak(this@AgentService, answer) }\n            )\n',
 )
 
-# Make Voice Recognition status explicit and add a hands-free toggle.
+# While a hands-free command is active, mirror live STT deltas into the main input field. This is
+# intentionally visible in the first build so recognition quality and endpoint timing are debuggable.
+bar = root / 'app/src/main/kotlin/ai/closepaw/ui/capsule/surface/CapsuleInputBar.kt'
+replace_once(
+    bar,
+    'import androidx.compose.runtime.Composable\n',
+    'import androidx.compose.runtime.Composable\nimport androidx.compose.runtime.collectAsState\n',
+)
+replace_once(
+    bar,
+    'import ai.closepaw.ui.capsule.voice.RecognizerFactory\n',
+    'import ai.closepaw.ui.capsule.voice.RecognizerFactory\nimport ai.closepaw.ui.capsule.voice.HandsFreeVoiceService\n',
+)
+replace_once(
+    bar,
+    '    var inputText by remember { mutableStateOf("") }\n',
+    '''    var inputText by remember { mutableStateOf("") }
+    val handsFreeTranscript by HandsFreeVoiceService.liveTranscript.collectAsState()
+    val handsFreeActive by HandsFreeVoiceService.commandSessionActive.collectAsState()
+    LaunchedEffect(handsFreeTranscript, handsFreeActive) {
+        if (handsFreeActive || handsFreeTranscript.isNotBlank()) {
+            inputText = handsFreeTranscript
+        }
+    }
+''',
+)
+
+# Make voice routing explicit. Normal mic can still use the existing selected STT model; hands-free
+# always uses local Vosk wake + gpt-live-transcribe + the selected OAuth/Codex model as intent gate.
 settings = root / 'app/src/main/kotlin/ai/closepaw/ui/settings/LlmAuthSettingsPage.kt'
 old = '''    if (selectedProvider == LLMProvider.OPENAI_API) {
         Spacer(modifier = Modifier.height(20.dp))
@@ -114,7 +171,7 @@ new = '''    if (selectedProvider == LLMProvider.OPENAI_API) {
         var handsFree by remember { mutableStateOf(ai.closepaw.ui.capsule.voice.HandsFreeVoiceService.isEnabled(voiceContext)) }
         val agentMode = modelCatalog.resolveOrNull(selectedModel)?.provider?.mode
         val agentAuth = when (agentMode) {
-            AuthMode.OAuth -> "ChatGPT sign-in / Plus-Codex allowance"
+            AuthMode.OAuth -> "ChatGPT sign-in / subscription allowance"
             AuthMode.ApiKey -> "API key billing"
             AuthMode.Local -> "On-device"
             null -> "Unknown"
@@ -123,14 +180,14 @@ new = '''    if (selectedProvider == LLMProvider.OPENAI_API) {
             Text("Agent model: $selectedModel", style = MaterialTheme.typography.bodyMedium)
             Text("Agent auth: $agentAuth", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(modifier = Modifier.height(8.dp))
-            Text("Speech model: $voiceModel", style = MaterialTheme.typography.bodyMedium)
+            Text("Normal mic STT: $voiceModel", style = MaterialTheme.typography.bodyMedium)
             Text(
                 text = if (voiceModel == VoiceTranscriptionSettings.SYSTEM) {
-                    "Speech: Android system recognizer"
+                    "Normal mic: Android system recognizer"
                 } else if (apiKeyText.isNotBlank()) {
-                    "Speech: OpenAI API key connected • language auto RU/EN"
+                    "Normal mic: OpenAI API key connected • language auto RU/EN"
                 } else {
-                    "Speech: OpenAI key missing • mic falls back to Android"
+                    "Normal mic: OpenAI key missing • falls back to Android"
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -142,35 +199,36 @@ new = '''    if (selectedProvider == LLMProvider.OPENAI_API) {
                 onModelChange = { selected ->
                     voiceModel = selected
                     VoiceTranscriptionSettings.save(voiceContext, selected)
-                    if (selected == VoiceTranscriptionSettings.SYSTEM && handsFree) {
-                        handsFree = false
-                        ai.closepaw.ui.capsule.voice.HandsFreeVoiceService.setEnabled(voiceContext, false)
-                    }
                 },
             )
+            Spacer(modifier = Modifier.height(12.dp))
+            Text("Hands-free wake: local Russian model • no cloud audio before “Алёша”", style = MaterialTheme.typography.bodySmall)
+            Text("Hands-free STT: gpt-live-transcribe • OpenAI API key", style = MaterialTheme.typography.bodySmall)
+            Text("Intent gate: $selectedModel • ChatGPT subscription", style = MaterialTheme.typography.bodySmall)
             Spacer(modifier = Modifier.height(10.dp))
             androidx.compose.material3.Button(
                 onClick = {
                     handsFree = !handsFree
                     ai.closepaw.ui.capsule.voice.HandsFreeVoiceService.setEnabled(voiceContext, handsFree)
                 },
-                enabled = apiKeyText.isNotBlank() && voiceModel != VoiceTranscriptionSettings.SYSTEM,
+                enabled = apiKeyText.isNotBlank() && agentMode == AuthMode.OAuth,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(if (handsFree) "Turn off hands-free “Алёша”" else "Turn on hands-free “Алёша”")
             }
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = if (handsFree) {
-                    "Listening in background. Say “Алёша, поставь ...” or say “Алёша”, wait for the beep, then the command. Final agent answers are read aloud."
-                } else {
-                    "Normal mic: one tap → speak → ~1.1 s silence → automatic transcription and send. Hands-free is off."
+                text = when {
+                    apiKeyText.isBlank() -> "Hands-free needs an OpenAI API key for live transcription."
+                    agentMode != AuthMode.OAuth -> "Hands-free intent gate needs ChatGPT Sign in as the selected agent model."
+                    handsFree -> "Idle audio stays local. After “Алёша”, live transcript appears in the main input. Each server-VAD pause is checked by the subscription model; it returns NOT_READY or the normalized intent. Final agent answers are read aloud."
+                    else -> "Hands-free is off."
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
-                "Privacy/cost: while hands-free is on, local VAD sends speech-sized audio segments to your selected OpenAI transcription model so it can detect “Алёша”.",
+                "Privacy/cost: before the local wake word, microphone audio is not uploaded. After wake, command audio is sent to OpenAI live STT only until the intent is accepted; the socket is closed before the action runs.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -197,4 +255,4 @@ metadata:
 - Do not like/dislike, edit library, subscribe, purchase, or change account settings unless explicitly asked.
 ''', encoding='utf-8')
 
-print('Hands-free integration patch applied')
+print('Hands-free live intent integration patch applied')

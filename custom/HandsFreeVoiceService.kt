@@ -9,6 +9,8 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
@@ -23,33 +25,31 @@ import ai.closepaw.app.AgentService
 import ai.closepaw.app.AuthStoreHolder
 import ai.closepaw.app.MainActivity
 import ai.closepaw.llm.LLMProvider
-import java.io.BufferedOutputStream
-import java.io.DataOutputStream
-import java.io.File
-import java.io.FileOutputStream
-import java.net.HttpURLConnection
-import java.net.URL
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.nio.charset.StandardCharsets
-import java.util.ArrayDeque
-import java.util.UUID
-import kotlin.math.sqrt
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.channels.BufferOverflow
-import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import org.json.JSONObject
 
 /**
- * Opt-in driving mode. Audio stays local until VAD finds a speech-sized segment; that segment is
- * sent to the configured OpenAI transcription model. Only transcripts beginning with “Алёша” are
- * routed to the agent. Saying just “Алёша” arms the next utterance for eight seconds.
+ * Opt-in driving mode.
+ *
+ * Idle path is fully local: 24 kHz microphone frames are fed only to [LocalWakeWordDetector].
+ * Nothing is uploaded before “Алёша” is recognized.
+ *
+ * After wake, one OpenAI Realtime transcription socket is opened. Server VAD supplies pause
+ * events; at each completed pause the cumulative transcript is checked by the selected
+ * ChatGPT/Codex subscription model. The gate returns either NOT_READY or the normalized intent.
+ * The Realtime socket is closed before that intent is handed to the normal ClosePaw agent, so
+ * music or other audio produced by the action is never left streaming to transcription.
  */
 class HandsFreeVoiceService : Service() {
     companion object {
@@ -57,13 +57,17 @@ class HandsFreeVoiceService : Service() {
         private const val NOTIFICATION_ID = 8042
         private const val ACTION_START = "ai.closepaw.voice.START_HANDS_FREE"
         private const val ACTION_STOP = "ai.closepaw.voice.STOP_HANDS_FREE"
-        private const val SAMPLE_RATE = 16_000
-        private const val FRAME_SAMPLES = 320
-        private const val SILENCE_MS = 1_100L
-        private const val MAX_UTTERANCE_MS = 15_000L
-        private const val ARMED_MS = 8_000L
+        private const val SAMPLE_RATE = 24_000
+        private const val FRAME_SAMPLES = 480 // 20 ms
         private const val PREFS = "voice_transcription_prefs"
         private const val KEY_ENABLED = "hands_free_enabled"
+        private const val COMMAND_SAFETY_TIMEOUT_MS = 5 * 60_000L
+
+        private val _liveTranscript = MutableStateFlow("")
+        val liveTranscript: StateFlow<String> = _liveTranscript.asStateFlow()
+
+        private val _commandSessionActive = MutableStateFlow(false)
+        val commandSessionActive: StateFlow<Boolean> = _commandSessionActive.asStateFlow()
 
         fun isEnabled(context: Context): Boolean =
             context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -72,6 +76,10 @@ class HandsFreeVoiceService : Service() {
         fun setEnabled(context: Context, enabled: Boolean) {
             context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .edit().putBoolean(KEY_ENABLED, enabled).apply()
+            if (!enabled) {
+                _commandSessionActive.value = false
+                _liveTranscript.value = ""
+            }
             val intent = Intent(context, HandsFreeVoiceService::class.java).apply {
                 action = if (enabled) ACTION_START else ACTION_STOP
             }
@@ -81,14 +89,19 @@ class HandsFreeVoiceService : Service() {
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val segments = Channel<ShortArray>(
-        capacity = 2,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST,
-    )
     private var listenJob: Job? = null
-    private var workerJob: Job? = null
+    private var gateJob: Job? = null
     private var recorder: AudioRecord? = null
-    @Volatile private var armedUntil: Long = 0L
+    private var wakeDetector: LocalWakeWordDetector? = null
+    private var intentGate: HandsFreeIntentGate? = null
+
+    @Volatile private var realtime: RealtimeCommandTranscriber? = null
+    @Volatile private var commandStartedAt: Long = 0L
+    private val commandSerial = AtomicLong(0L)
+    private val speechGeneration = AtomicLong(0L)
+    private val stoppedGeneration = ConcurrentHashMap<String, Long>()
+
+    private var audioFocusRequest: AudioFocusRequest? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -103,7 +116,7 @@ class HandsFreeVoiceService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        startForeground(NOTIFICATION_ID, notification("Алёша • слушаю"))
+        startForeground(NOTIFICATION_ID, notification("Алёша • запускаю локальное распознавание…"))
         if (listenJob == null) startListening()
         return START_STICKY
     }
@@ -111,12 +124,21 @@ class HandsFreeVoiceService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        gateJob?.cancel()
         listenJob?.cancel()
-        workerJob?.cancel()
+        closeCommand(clearTranscript = true)
         runCatching { recorder?.stop() }
         recorder?.release()
         recorder = null
-        segments.close()
+        wakeDetector?.close()
+        wakeDetector = null
+        val gate = intentGate
+        intentGate = null
+        if (gate != null) {
+            scope.launch { runCatching { gate.cleanup() } }
+        }
+        _commandSessionActive.value = false
+        _liveTranscript.value = ""
         scope.cancel()
         super.onDestroy()
     }
@@ -126,66 +148,172 @@ class HandsFreeVoiceService : Service() {
             failAndDisable("Нужен доступ к микрофону")
             return
         }
-        if (apiKeyOrNull() == null) {
-            failAndDisable("Добавь OpenAI API key")
+        val apiKey = apiKeyOrNull()
+        if (apiKey == null) {
+            failAndDisable("Добавь OpenAI API key для live transcription")
             return
         }
 
-        workerJob = scope.launch {
-            for (samples in segments) processSegment(samples)
-        }
+        val detector = LocalWakeWordDetector(this)
+        wakeDetector = detector
+        intentGate = HandsFreeIntentGate(this)
+
         listenJob = scope.launch {
+            updateNotification("Алёша • готовлю локальную wake-модель…")
+            val wakeInit = detector.initialize()
+            if (wakeInit.isFailure) {
+                failAndDisable("Не удалось загрузить локальную wake-модель")
+                return@launch
+            }
+
             val audio = createRecorder() ?: run {
                 failAndDisable("Микрофон недоступен")
                 return@launch
             }
             recorder = audio
             audio.startRecording()
+            updateNotification("Алёша • локально слушаю")
 
             val frame = ShortArray(FRAME_SAMPLES)
-            val preRoll = ArrayDeque<ShortArray>()
-            val utterance = mutableListOf<ShortArray>()
-            var speaking = false
-            var floor = 250.0
-            var hotFrames = 0
-            var speechStart = 0L
-            var lastVoice = 0L
-
             while (isActive) {
                 val read = audio.read(frame, 0, frame.size, AudioRecord.READ_BLOCKING)
                 if (read <= 0) continue
-                val copy = frame.copyOf(read)
-                val level = rms(copy)
-                val now = SystemClock.elapsedRealtime()
-                val threshold = maxOf(700.0, floor * 3.2)
 
-                if (!speaking) {
-                    preRoll.addLast(copy)
-                    while (preRoll.size > 25) preRoll.removeFirst()
-                    if (level > threshold) hotFrames++ else hotFrames = 0
-                    if (level < threshold) floor = floor * 0.985 + level * 0.015
-                    if (hotFrames >= 3) {
-                        speaking = true
-                        speechStart = now
-                        lastVoice = now
-                        utterance.clear()
-                        preRoll.forEach { utterance.add(it) }
-                        preRoll.clear()
-                        hotFrames = 0
+                val command = realtime
+                if (command == null) {
+                    if (detector.accept24k(frame, read)) {
+                        beginCommand(apiKey)
                     }
                 } else {
-                    utterance.add(copy)
-                    if (level > threshold * 0.82) lastVoice = now
-                    if (now - lastVoice >= SILENCE_MS || now - speechStart >= MAX_UTTERANCE_MS) {
-                        val joined = join(utterance)
-                        if (joined.size >= SAMPLE_RATE / 3) segments.trySend(joined)
-                        utterance.clear()
-                        preRoll.clear()
-                        speaking = false
+                    command.appendPcm24k(frame, read)
+                    val started = commandStartedAt
+                    if (started > 0L && SystemClock.elapsedRealtime() - started > COMMAND_SAFETY_TIMEOUT_MS) {
+                        abortCommand("Сессия слишком долго открыта • скажи «Алёша» ещё раз")
                     }
                 }
             }
         }
+    }
+
+    private fun beginCommand(apiKey: String) {
+        if (realtime != null) return
+        gateJob?.cancel()
+        stoppedGeneration.clear()
+        speechGeneration.incrementAndGet()
+        val serial = commandSerial.incrementAndGet()
+        commandStartedAt = SystemClock.elapsedRealtime()
+        _liveTranscript.value = ""
+        _commandSessionActive.value = true
+        requestTransientAudioFocus()
+        beep()
+        updateNotification("Алёша • подключаю live transcription…")
+
+        val session = RealtimeCommandTranscriber(
+            apiKey = apiKey,
+            listener = object : RealtimeCommandTranscriber.Listener {
+                override fun onConnected() {
+                    if (!isCurrent(serial)) return
+                    updateNotification("Алёша • слушаю команду…")
+                }
+
+                override fun onSpeechStarted(itemId: String) {
+                    if (!isCurrent(serial)) return
+                    speechGeneration.incrementAndGet()
+                    gateJob?.cancel()
+                    updateNotification("Алёша • слушаю…")
+                }
+
+                override fun onSpeechStopped(itemId: String) {
+                    if (!isCurrent(serial)) return
+                    stoppedGeneration[itemId] = speechGeneration.get()
+                    updateNotification("Алёша • пауза, проверяю intent…")
+                }
+
+                override fun onLiveTranscript(text: String) {
+                    if (!isCurrent(serial)) return
+                    _liveTranscript.value = text
+                }
+
+                override fun onTurnReady(itemId: String, cumulativeTranscript: String) {
+                    if (!isCurrent(serial)) return
+                    val generation = stoppedGeneration.remove(itemId) ?: speechGeneration.get()
+                    if (generation != speechGeneration.get()) return
+                    evaluateIntent(serial, generation, cumulativeTranscript)
+                }
+
+                override fun onError(message: String) {
+                    if (!isCurrent(serial)) return
+                    abortCommand("Live transcription error • ${message.take(80)}")
+                }
+            },
+        )
+        realtime = session
+        session.start()
+    }
+
+    private fun evaluateIntent(serial: Long, generation: Long, transcript: String) {
+        gateJob?.cancel()
+        val gate = intentGate ?: return
+        gateJob = scope.launch {
+            val result = gate.classify(transcript)
+            if (!isCurrent(serial) || generation != speechGeneration.get()) return@launch
+
+            result.fold(
+                onSuccess = { intent ->
+                    if (intent.isNullOrBlank()) {
+                        updateNotification("Алёша • intent ещё не готов, слушаю дальше…")
+                    } else {
+                        // Critical ordering: stop cloud audio BEFORE the command can start music/TTS.
+                        closeCommand(clearTranscript = false)
+                        _liveTranscript.value = intent
+                        updateNotification("Алёша → ${intent.take(80)}")
+                        val agent = AgentService.instance
+                        if (agent == null) {
+                            updateNotification("Алёша услышала • включи Accessibility")
+                        } else {
+                            agent.submitHandsFreeCommand(intent)
+                        }
+                        scope.launch {
+                            delay(2_500L)
+                            if (realtime == null) _liveTranscript.value = ""
+                        }
+                    }
+                },
+                onFailure = { error ->
+                    // Do not silently fall back to API billing: this gate is intentionally OAuth-only.
+                    abortCommand("Intent gate error • ${error.message?.take(80) ?: "проверь ChatGPT sign-in"}")
+                },
+            )
+        }
+    }
+
+    private fun isCurrent(serial: Long): Boolean =
+        serial == commandSerial.get() && realtime != null
+
+    private fun abortCommand(message: String) {
+        closeCommand(clearTranscript = false)
+        updateNotification("Алёша • $message")
+        scope.launch {
+            delay(2_500L)
+            if (realtime == null) {
+                _liveTranscript.value = ""
+                updateNotification("Алёша • локально слушаю")
+            }
+        }
+    }
+
+    private fun closeCommand(clearTranscript: Boolean) {
+        gateJob?.cancel()
+        gateJob = null
+        val old = realtime
+        realtime = null
+        commandStartedAt = 0L
+        stoppedGeneration.clear()
+        _commandSessionActive.value = false
+        old?.close()
+        abandonTransientAudioFocus()
+        wakeDetector?.reset()
+        if (clearTranscript) _liveTranscript.value = ""
     }
 
     @SuppressLint("MissingPermission")
@@ -204,7 +332,7 @@ class HandsFreeVoiceService : Service() {
                     .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
                     .build()
             )
-            .setBufferSizeInBytes(maxOf(min.coerceAtLeast(0), FRAME_SAMPLES * 16))
+            .setBufferSizeInBytes(maxOf(min.coerceAtLeast(0), FRAME_SAMPLES * 2 * 8))
             .build()
         return if (r.state == AudioRecord.STATE_INITIALIZED) r else {
             r.release()
@@ -212,122 +340,41 @@ class HandsFreeVoiceService : Service() {
         }
     }
 
-    private fun processSegment(samples: ShortArray) {
-        val key = apiKeyOrNull() ?: return
-        val model = selectedSpeechModel()
-        val wav = writeWav(samples)
-        try {
-            val transcript = transcribe(wav, key, model).trim()
-            if (transcript.isBlank()) return
-            val now = SystemClock.elapsedRealtime()
-            val parsed = HandsFreeCommandParser.parse(transcript, armed = now < armedUntil)
-            if (!parsed.wakeDetected) return
-
-            val command = parsed.command
-            if (command.isNullOrBlank()) {
-                armedUntil = now + ARMED_MS
-                beep()
-                updateNotification("Алёша • слушаю команду…")
-                return
-            }
-
-            armedUntil = 0L
-            beep()
-            updateNotification("Алёша → ${command.take(70)}")
-            val agent = AgentService.instance
-            if (agent == null) updateNotification("Алёша услышала • включи Accessibility")
-            else agent.submitHandsFreeCommand(command)
-        } catch (_: Throwable) {
-            updateNotification("Алёша • ошибка распознавания, продолжаю слушать")
-        } finally {
-            runCatching { wav.delete() }
-        }
-    }
-
     private fun apiKeyOrNull(): String? = runCatching {
         AuthStoreHolder.get(this).requireApiKey(LLMProvider.OPENAI_API)
     }.getOrNull()?.takeIf { it.isNotBlank() }
 
-    private fun selectedSpeechModel(): String {
-        val model = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString("voice_transcription_model", "gpt-transcribe")
-            .orEmpty()
-        return if (model == "system" || model.isBlank()) "gpt-transcribe" else model
-    }
-
-    private fun transcribe(file: File, apiKey: String, model: String): String {
-        val boundary = "----ClosePaw-${UUID.randomUUID()}"
-        val c = (URL("https://api.openai.com/v1/audio/transcriptions").openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
-            connectTimeout = 15_000
-            readTimeout = 60_000
-            doOutput = true
-            setRequestProperty("Authorization", "Bearer $apiKey")
-            setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
-        }
-        try {
-            DataOutputStream(BufferedOutputStream(c.outputStream)).use { out ->
-                writePart(out, boundary, "model", model)
-                writePart(out, boundary, "prompt", "Wake word is Алёша (Алеша/Alyosha). Speaker may mix Russian and English. Preserve app names and song titles.")
-                out.write("--$boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"speech.wav\"\r\nContent-Type: audio/wav\r\n\r\n".toByteArray(StandardCharsets.UTF_8))
-                file.inputStream().use { it.copyTo(out) }
-                out.write("\r\n--$boundary--\r\n".toByteArray(StandardCharsets.UTF_8))
-            }
-            val status = c.responseCode
-            val body = (if (status in 200..299) c.inputStream else c.errorStream)
-                ?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() }.orEmpty()
-            if (status !in 200..299) error("HTTP $status")
-            return JSONObject(body).optString("text", "")
-        } finally {
-            c.disconnect()
+    private fun requestTransientAudioFocus() {
+        runCatching {
+            val manager = getSystemService(AudioManager::class.java)
+            val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                )
+                .setOnAudioFocusChangeListener { }
+                .build()
+            audioFocusRequest = request
+            manager.requestAudioFocus(request)
         }
     }
 
-    private fun writePart(out: DataOutputStream, boundary: String, name: String, value: String) {
-        out.write("--$boundary\r\nContent-Disposition: form-data; name=\"$name\"\r\n\r\n$value\r\n".toByteArray(StandardCharsets.UTF_8))
+    private fun abandonTransientAudioFocus() {
+        val request = audioFocusRequest ?: return
+        audioFocusRequest = null
+        runCatching { getSystemService(AudioManager::class.java).abandonAudioFocusRequest(request) }
     }
-
-    private fun writeWav(samples: ShortArray): File {
-        val file = File.createTempFile("closepaw_handsfree_", ".wav", cacheDir)
-        val dataSize = samples.size * 2
-        FileOutputStream(file).use { out ->
-            out.write("RIFF".toByteArray())
-            out.write(leInt(36 + dataSize))
-            out.write("WAVEfmt ".toByteArray())
-            out.write(leInt(16)); out.write(leShort(1)); out.write(leShort(1))
-            out.write(leInt(SAMPLE_RATE)); out.write(leInt(SAMPLE_RATE * 2))
-            out.write(leShort(2)); out.write(leShort(16))
-            out.write("data".toByteArray()); out.write(leInt(dataSize))
-            val data = ByteBuffer.allocate(dataSize).order(ByteOrder.LITTLE_ENDIAN)
-            samples.forEach { data.putShort(it) }
-            out.write(data.array())
-        }
-        return file
-    }
-
-    private fun rms(samples: ShortArray): Double {
-        if (samples.isEmpty()) return 0.0
-        var sum = 0.0
-        samples.forEach { val v = it.toDouble(); sum += v * v }
-        return sqrt(sum / samples.size)
-    }
-
-    private fun join(frames: List<ShortArray>): ShortArray {
-        val out = ShortArray(frames.sumOf { it.size })
-        var offset = 0
-        frames.forEach { frame -> frame.copyInto(out, offset); offset += frame.size }
-        return out
-    }
-
-    private fun leInt(v: Int): ByteArray = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(v).array()
-    private fun leShort(v: Int): ByteArray = ByteBuffer.allocate(2).order(ByteOrder.LITTLE_ENDIAN).putShort(v.toShort()).array()
 
     private fun beep() {
-        runCatching {
-            val tone = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 55)
-            tone.startTone(ToneGenerator.TONE_PROP_BEEP, 120)
-            Thread.sleep(140)
-            tone.release()
+        scope.launch {
+            runCatching {
+                val tone = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 55)
+                tone.startTone(ToneGenerator.TONE_PROP_BEEP, 120)
+                delay(140L)
+                tone.release()
+            }
         }
     }
 
@@ -354,6 +401,8 @@ class HandsFreeVoiceService : Service() {
 
     private fun failAndDisable(message: String) {
         getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_ENABLED, false).apply()
+        _commandSessionActive.value = false
+        _liveTranscript.value = ""
         updateNotification("Алёша выключена • $message")
         stopSelf()
     }
