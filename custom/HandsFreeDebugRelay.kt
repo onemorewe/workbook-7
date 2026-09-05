@@ -1,7 +1,6 @@
 package ai.closepaw.ui.capsule.voice
 
 import android.content.Context
-import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -14,17 +13,16 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 
 /**
- * Tiny zero-account debug relay for hands-free development.
+ * Zero-account remote debug relay for the hands-free prototype.
  *
- * It publishes compact text/JSON events to a random ntfy.sh topic generated locally on the
- * device. The topic is intentionally not committed to source control. Anyone who knows the topic
- * URL can read it until ntfy cache expiry, so never send credentials, screenshots or prompt
- * artifacts through this relay.
+ * The topic is intentionally pinned in source control so the development assistant can inspect the
+ * same stream after every install/update without asking the driver to copy anything from the phone.
+ * This is a development-only observability choice; anyone who knows the topic can read cached events.
+ * Credentials are still redacted before publishing.
  */
 internal object HandsFreeDebugRelay {
-    private const val PREFS = "voice_transcription_prefs"
-    private const val KEY_TOPIC = "hands_free_debug_topic"
     private const val BASE = "https://ntfy.sh"
+    private const val TOPIC = "closepaw-hf-7ff9c7fb0ec9b03ae896c1af451e26826e2eff8fa63824fd"
     private const val MAX_MESSAGE_CHARS = 3_500
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -32,11 +30,12 @@ internal object HandsFreeDebugRelay {
         .callTimeout(5, TimeUnit.SECONDS)
         .build()
 
-    @Volatile private var topic: String? = null
     @Volatile private var enabled = false
 
     fun configure(context: Context) {
-        topic = ensureTopic(context.applicationContext)
+        // Keep Context in the API because callers are Android lifecycle owners and this lets us add
+        // device/build metadata later without changing every call site.
+        @Suppress("UNUSED_VARIABLE") val appContext = context.applicationContext
         enabled = true
         publish("relay", "debug relay online")
     }
@@ -46,8 +45,8 @@ internal object HandsFreeDebugRelay {
     }
 
     fun readUrl(context: Context): String {
-        val t = topic ?: ensureTopic(context.applicationContext).also { topic = it }
-        return "$BASE/$t/json?poll=1&since=12h"
+        @Suppress("UNUSED_VARIABLE") val appContext = context.applicationContext
+        return "$BASE/$TOPIC/json?poll=1&since=12h"
     }
 
     fun publish(stage: String, message: String) {
@@ -71,28 +70,22 @@ internal object HandsFreeDebugRelay {
     }
 
     private fun post(payload: String) {
-        val t = topic ?: return
         scope.launch {
             runCatching {
                 val body = payload.take(MAX_MESSAGE_CHARS)
                     .toRequestBody("text/plain; charset=utf-8".toMediaType())
                 val request = Request.Builder()
-                    .url("$BASE/$t")
+                    .url("$BASE/$TOPIC")
                     .header("Title", "ClosePaw hands-free debug")
                     .post(body)
                     .build()
-                client.newCall(request).execute().use { }
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        throw IllegalStateException("ntfy HTTP ${response.code}")
+                    }
+                }
             }
         }
-    }
-
-    private fun ensureTopic(context: Context): String {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val existing = prefs.getString(KEY_TOPIC, null)?.takeIf { it.length >= 20 }
-        if (existing != null) return existing
-        val generated = "closepaw-${UUID.randomUUID().toString().replace("-", "")}".take(60)
-        prefs.edit().putString(KEY_TOPIC, generated).apply()
-        return generated
     }
 
     private fun sanitize(raw: String): String = raw
