@@ -61,6 +61,7 @@ jobs:
           cp custom/HandsFreeCommandParser.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/HandsFreeCommandParser.kt
           cp custom/HandsFreeVoiceService.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/HandsFreeVoiceService.kt
           cp custom/HandsFreeSpeaker.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/HandsFreeSpeaker.kt
+          cp custom/HandsFreeDebugRelay.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/HandsFreeDebugRelay.kt
           cp custom/LocalWakeWordDetector.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/LocalWakeWordDetector.kt
           cp custom/MicroFrontend.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/MicroFrontend.kt
           cp custom/RealtimeCommandTranscriber.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/RealtimeCommandTranscriber.kt
@@ -86,6 +87,7 @@ jobs:
           cp patch_handsfree_safety_panel.py closepaw/patch_handsfree_safety_panel.py
           cp patch_handsfree_start_order.py closepaw/patch_handsfree_start_order.py
           cp patch_handsfree_pipeline_reliability.py closepaw/patch_handsfree_pipeline_reliability.py
+          cp patch_handsfree_observability.py closepaw/patch_handsfree_observability.py
           cd closepaw
           python3 patch_handsfree_integration.py
           python3 patch_handsfree_fix.py
@@ -93,6 +95,7 @@ jobs:
           python3 patch_handsfree_safety_panel.py
           python3 patch_handsfree_start_order.py
           python3 patch_handsfree_pipeline_reliability.py
+          python3 patch_handsfree_observability.py
 
       - name: Generate synthetic Hey Jarvis speech fixture
         run: |
