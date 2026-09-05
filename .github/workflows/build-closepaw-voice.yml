@@ -2,7 +2,7 @@ name: Build ClosePaw GPT Voice
 
 on:
   push:
-    branches: [main, alyosha-live-intent]
+    branches: [main, alyosha-live-intent, alyosha-microwakeword]
   workflow_dispatch:
 
 permissions:
@@ -11,7 +11,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
     steps:
       - name: Checkout patch repo
         uses: actions/checkout@v4
@@ -52,35 +52,46 @@ jobs:
           cd closepaw
           python3 patch_voice_ux.py
 
-      - name: Add hands-free Alyosha live intent mode
+      - name: Add hands-free live intent mode
         run: |
           mkdir -p closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice
           cp custom/HandsFreeCommandParser.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/HandsFreeCommandParser.kt
           cp custom/HandsFreeVoiceService.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/HandsFreeVoiceService.kt
           cp custom/HandsFreeSpeaker.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/HandsFreeSpeaker.kt
           cp custom/LocalWakeWordDetector.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/LocalWakeWordDetector.kt
+          cp custom/MicroFrontend.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/MicroFrontend.kt
           cp custom/RealtimeCommandTranscriber.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/RealtimeCommandTranscriber.kt
           cp custom/HandsFreeIntentGate.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/HandsFreeIntentGate.kt
 
-          # Official Apache-2.0 small Russian Vosk model. It is packaged into the APK and copied
-          # once to app-private storage by Vosk; runtime wake detection never needs the network.
+          # Reuse the proven Android microWakeWord frontend implementation from a pinned Apache-2.0
+          # Teya revision. It vendors the Apache-2.0 TFLite-Micro frontend plus BSD-3-Clause kissfft.
           curl -fL --retry 3 --retry-delay 2 \
-            -o /tmp/vosk-model-small-ru-0.22.zip \
-            https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip
-          rm -rf /tmp/vosk-model
-          mkdir -p /tmp/vosk-model closepaw/app/src/main/assets
-          unzip -q /tmp/vosk-model-small-ru-0.22.zip -d /tmp/vosk-model
-          test -d /tmp/vosk-model/vosk-model-small-ru-0.22
-          # Vosk Android StorageService uses this marker only for asset-version synchronization;
-          # the upstream desktop model archive does not ship one.
-          printf '%s\n' 'closepaw-vosk-small-ru-0.22-v1' > /tmp/vosk-model/vosk-model-small-ru-0.22/uuid
-          cp -R /tmp/vosk-model/vosk-model-small-ru-0.22 closepaw/app/src/main/assets/
+            -o /tmp/teya.tar.gz \
+            https://github.com/adgapar/teya/archive/b503872835ff3cafa8c399c4275e3e43c37d6577.tar.gz
+          rm -rf /tmp/teya-src
+          mkdir -p /tmp/teya-src
+          tar -xzf /tmp/teya.tar.gz -C /tmp/teya-src --strip-components=1
+          cp -R /tmp/teya-src/app/src/main/cpp closepaw/app/src/main/
+          sed -i 's/Java_com_teya_agent_voice_MicroFrontend/Java_ai_closepaw_ui_capsule_voice_MicroFrontend/g' \
+            closepaw/app/src/main/cpp/microfrontend/MicroFrontend_jni.cpp
+
+          # Known-good English microWakeWord control model. This is deliberately a benchmark asset,
+          # not the final Alyosha model; the final trained Russian model uses the identical runtime.
+          mkdir -p closepaw/app/src/main/assets
+          curl -fL --retry 3 --retry-delay 2 \
+            -o closepaw/app/src/main/assets/wake_word.tflite \
+            https://raw.githubusercontent.com/esphome/micro-wake-word-models/05b65922cc433c9df13e98e32a7fe520758c837e/models/v2/hey_jarvis.tflite
+          curl -fL --retry 3 --retry-delay 2 \
+            -o closepaw/app/src/main/assets/wake_word.json \
+            https://raw.githubusercontent.com/esphome/micro-wake-word-models/05b65922cc433c9df13e98e32a7fe520758c837e/models/v2/hey_jarvis.json
 
           cp patch_handsfree_integration.py closepaw/patch_handsfree_integration.py
           cp patch_handsfree_fix.py closepaw/patch_handsfree_fix.py
+          cp patch_microwakeword_build.py closepaw/patch_microwakeword_build.py
           cd closepaw
           python3 patch_handsfree_integration.py
           python3 patch_handsfree_fix.py
+          python3 patch_microwakeword_build.py
 
       - name: Run unit tests
         working-directory: closepaw
