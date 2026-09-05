@@ -2,7 +2,7 @@ name: Build ClosePaw GPT Voice
 
 on:
   push:
-    branches: [main]
+    branches: [main, alyosha-live-intent]
   workflow_dispatch:
 
 permissions:
@@ -11,7 +11,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - name: Checkout patch repo
         uses: actions/checkout@v4
@@ -52,12 +52,27 @@ jobs:
           cd closepaw
           python3 patch_voice_ux.py
 
-      - name: Add hands-free Alyosha mode
+      - name: Add hands-free Alyosha live intent mode
         run: |
           mkdir -p closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice
           cp custom/HandsFreeCommandParser.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/HandsFreeCommandParser.kt
           cp custom/HandsFreeVoiceService.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/HandsFreeVoiceService.kt
           cp custom/HandsFreeSpeaker.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/HandsFreeSpeaker.kt
+          cp custom/LocalWakeWordDetector.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/LocalWakeWordDetector.kt
+          cp custom/RealtimeCommandTranscriber.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/RealtimeCommandTranscriber.kt
+          cp custom/HandsFreeIntentGate.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/HandsFreeIntentGate.kt
+
+          # Official Apache-2.0 small Russian Vosk model. It is packaged into the APK and copied
+          # once to app-private storage by Vosk; runtime wake detection never needs the network.
+          curl -fL --retry 3 --retry-delay 2 \
+            -o /tmp/vosk-model-small-ru-0.22.zip \
+            https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip
+          rm -rf /tmp/vosk-model
+          mkdir -p /tmp/vosk-model closepaw/app/src/main/assets
+          unzip -q /tmp/vosk-model-small-ru-0.22.zip -d /tmp/vosk-model
+          test -f /tmp/vosk-model/vosk-model-small-ru-0.22/uuid
+          cp -R /tmp/vosk-model/vosk-model-small-ru-0.22 closepaw/app/src/main/assets/
+
           cp patch_handsfree_integration.py closepaw/patch_handsfree_integration.py
           cp patch_handsfree_fix.py closepaw/patch_handsfree_fix.py
           cd closepaw
