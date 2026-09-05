@@ -69,27 +69,16 @@ jobs:
           cp custom/HandsFreeSafetyInstrumentedTest.kt closepaw/app/src/androidTest/kotlin/ai/closepaw/ui/capsule/voice/HandsFreeSafetyInstrumentedTest.kt
           cp custom/VoiceRuntimeUiInstrumentedTest.kt closepaw/app/src/androidTest/kotlin/ai/closepaw/ui/capsule/voice/VoiceRuntimeUiInstrumentedTest.kt
 
-          # Reuse the proven Android microWakeWord frontend implementation from a pinned Apache-2.0
-          # Teya revision. It vendors the Apache-2.0 TFLite-Micro frontend plus BSD-3-Clause kissfft.
-          curl -fL --retry 3 --retry-delay 2 \
-            -o /tmp/teya.tar.gz \
-            https://github.com/adgapar/teya/archive/b503872835ff3cafa8c399c4275e3e43c37d6577.tar.gz
+          curl -fL --retry 3 --retry-delay 2 -o /tmp/teya.tar.gz https://github.com/adgapar/teya/archive/b503872835ff3cafa8c399c4275e3e43c37d6577.tar.gz
           rm -rf /tmp/teya-src
           mkdir -p /tmp/teya-src
           tar -xzf /tmp/teya.tar.gz -C /tmp/teya-src --strip-components=1
           cp -R /tmp/teya-src/app/src/main/cpp closepaw/app/src/main/
-          sed -i 's/Java_com_teya_agent_voice_MicroFrontend/Java_ai_closepaw_ui_capsule_voice_MicroFrontend/g' \
-            closepaw/app/src/main/cpp/microfrontend/MicroFrontend_jni.cpp
+          sed -i 's/Java_com_teya_agent_voice_MicroFrontend/Java_ai_closepaw_ui_capsule_voice_MicroFrontend/g' closepaw/app/src/main/cpp/microfrontend/MicroFrontend_jni.cpp
 
-          # Known-good English microWakeWord control model. This is deliberately a benchmark asset,
-          # not the final Alyosha model; the final trained Russian model uses the identical runtime.
           mkdir -p closepaw/app/src/main/assets
-          curl -fL --retry 3 --retry-delay 2 \
-            -o closepaw/app/src/main/assets/wake_word.tflite \
-            https://raw.githubusercontent.com/esphome/micro-wake-word-models/05b65922cc433c9df13e98e32a7fe520758c837e/models/v2/hey_jarvis.tflite
-          curl -fL --retry 3 --retry-delay 2 \
-            -o closepaw/app/src/main/assets/wake_word.json \
-            https://raw.githubusercontent.com/esphome/micro-wake-word-models/05b65922cc433c9df13e98e32a7fe520758c837e/models/v2/hey_jarvis.json
+          curl -fL --retry 3 --retry-delay 2 -o closepaw/app/src/main/assets/wake_word.tflite https://raw.githubusercontent.com/esphome/micro-wake-word-models/05b65922cc433c9df13e98e32a7fe520758c837e/models/v2/hey_jarvis.tflite
+          curl -fL --retry 3 --retry-delay 2 -o closepaw/app/src/main/assets/wake_word.json https://raw.githubusercontent.com/esphome/micro-wake-word-models/05b65922cc433c9df13e98e32a7fe520758c837e/models/v2/hey_jarvis.json
 
           cp patch_handsfree_integration.py closepaw/patch_handsfree_integration.py
           cp patch_handsfree_fix.py closepaw/patch_handsfree_fix.py
@@ -147,8 +136,7 @@ jobs:
           working-directory: closepaw
           script: |
             set +e
-            ./gradlew :app:connectedDebugAndroidTest --stacktrace \
-              -Pandroid.testInstrumentationRunnerArguments.class=ai.closepaw.ui.capsule.voice.HandsFreeSafetyInstrumentedTest,ai.closepaw.ui.capsule.voice.VoiceRuntimeUiInstrumentedTest
+            ./gradlew :app:connectedDebugAndroidTest --stacktrace -Pandroid.testInstrumentationRunnerArguments.class=ai.closepaw.ui.capsule.voice.HandsFreeSafetyInstrumentedTest,ai.closepaw.ui.capsule.voice.VoiceRuntimeUiInstrumentedTest
             STATUS=$?
             echo "----- relevant emulator logcat -----"
             adb logcat -d -v threadtime | grep -E 'AndroidRuntime|HandsFree|ClosePaw|RealtimeCommandTranscriber|CodexResponseClient' | tail -n 500 || true
@@ -184,8 +172,7 @@ jobs:
           "$APKSIGNER" verify --print-certs closepaw/app/build/outputs/apk/release/app-release.apk
 
       - name: Name APK
-        run: |
-          cp closepaw/app/build/outputs/apk/release/app-release.apk "ClosePaw-GPT-Voice-${GITHUB_RUN_NUMBER}.apk"
+        run: cp closepaw/app/build/outputs/apk/release/app-release.apk "ClosePaw-GPT-Voice-${GITHUB_RUN_NUMBER}.apk"
 
       - name: Upload signed APK
         uses: actions/upload-artifact@v4
