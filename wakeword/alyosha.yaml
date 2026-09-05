@@ -1,0 +1,107 @@
+model_name: alyosha
+wake_word: "Алёша"
+author: onemorewe
+trained_languages: ["ru"]
+version: 1
+
+# Start general-purpose. Personal voice recordings can be added after the first on-phone benchmark.
+train_with_recordings: false
+
+target_phrases:
+  - Алёша
+  - Алёша!
+  - Алёша?
+  - Алеша
+  - Алеша!
+  - Алеша?
+
+# Production-oriented rather than a quick demo run. False-positive mining from the user's car/radio
+# environment should be added for v2 after real-device logging.
+training:
+  n_samples: 100000
+  n_samples_val: 20000
+
+voices:
+  primary:
+    base_url: https://huggingface.co/rhasspy/piper-voices/resolve/main/ru/ru_RU
+    models:
+      ru_RU-dmitri-medium: dmitri/medium
+      ru_RU-denis-medium: denis/medium
+      ru_RU-irina-medium: irina/medium
+      ru_RU-ruslan-medium: ruslan/medium
+  secondary:
+    base_url: https://huggingface.co/rhasspy/piper-voices/resolve/main
+    models:
+      en_US-amy-medium: en/en_US/amy/medium
+      en_US-john-medium: en/en_US/john/medium
+      en_GB-alan-medium: en/en_GB/alan/medium
+
+# Hard negatives are intentionally heavy on names and fragments that a car radio / podcast could
+# produce. "Лёша" is negative on purpose: the actual wake phrase remains the more distinctive
+# three-syllable "Алёша".
+negative_phrases:
+  - Лёша
+  - Леша
+  - Алёш
+  - Алеш
+  - Алёшка
+  - Алешка
+  - Алексей
+  - Алекс
+  - Александр
+  - Алёна
+  - Алена
+  - Алла
+  - Алло
+  - Алиса
+  - Алиша
+  - Алеша сказал
+  - Лёша сказал
+  - Хорошо
+  - Хороший
+  - Слышишь
+  - Конечно
+  - Пожалуйста
+  - Привет
+  - Окей
+  - Стоп
+  - Начни
+  - Открой
+  - Помоги
+  - Маруся
+  - Салют
+  - Джарвис
+  - Alexa
+  - Alyssa
+  - Alicia
+  - Elisha
+  - Alesha
+  - Alyosha
+  - Hey Jarvis
+  - Hey Google
+  - Hey Siri
+
+microwakeword:
+  architecture: mixednet
+  pointwise_filters: "64,64,64,64"
+  repeat_in_block: "1,1,1,1"
+  mixconv_kernel_sizes: "[5], [7,11], [9,15], [23]"
+  first_conv_filters: 32
+  first_conv_kernel_size: 5
+  stride: 3
+  spectrogram_length: 204
+
+  training_steps: 20000
+  batch_size: 128
+  learning_rate: 0.001
+  positive_class_weight: 1.5
+  negative_class_weight: 1
+
+  time_mask_max_size: 5
+  time_mask_count: 2
+  freq_mask_max_size: 5
+  freq_mask_count: 2
+
+  # Conservative v1. We can lower this after measuring real recall and mined false positives.
+  probability_cutoff: 0.9
+  sliding_window_size: 10
