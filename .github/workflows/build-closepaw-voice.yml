@@ -3,6 +3,7 @@ name: Build ClosePaw GPT Voice
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -24,6 +25,18 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Verify signing secrets
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          test -n "$KEYSTORE_BASE64" || { echo 'Missing KEYSTORE_BASE64'; exit 1; }
+          test -n "$KEYSTORE_PASSWORD" || { echo 'Missing KEYSTORE_PASSWORD'; exit 1; }
+          test -n "$KEY_ALIAS" || { echo 'Missing KEY_ALIAS'; exit 1; }
+          test -n "$KEY_PASSWORD" || { echo 'Missing KEY_PASSWORD'; exit 1; }
+
       - name: Clone ClosePaw
         run: git clone --depth 1 https://github.com/imoonkey/closepaw.git closepaw
 
@@ -33,13 +46,43 @@ jobs:
           cd closepaw
           python3 patch_closepaw_voice.py
 
-      - name: Build debug APK
+      - name: Set custom version
         working-directory: closepaw
-        run: ./gradlew :app:assembleDebug --stacktrace
+        run: |
+          CODE=$((100000 + GITHUB_RUN_NUMBER))
+          sed -i "s/^VERSION_CODE=.*/VERSION_CODE=$CODE/" gradle.properties
+          sed -i "s/^VERSION_NAME=.*/VERSION_NAME=0.1.0-custom.${GITHUB_RUN_NUMBER}/" gradle.properties
+          echo "Building versionCode=$CODE"
 
-      - name: Upload APK
+      - name: Restore stable signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/closepaw-custom.jks"
+          chmod 600 "$GITHUB_WORKSPACE/closepaw-custom.jks"
+
+      - name: Build signed release APK
+        working-directory: closepaw
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/closepaw-custom.jks
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew :app:assembleRelease --stacktrace
+
+      - name: Verify APK signature
+        run: |
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
+          "$APKSIGNER" verify --print-certs closepaw/app/build/outputs/apk/release/app-release.apk
+
+      - name: Name APK
+        run: |
+          cp closepaw/app/build/outputs/apk/release/app-release.apk "ClosePaw-GPT-Voice-${GITHUB_RUN_NUMBER}.apk"
+
+      - name: Upload signed APK
         uses: actions/upload-artifact@v4
         with:
-          name: ClosePaw-GPT-Voice
-          path: closepaw/app/build/outputs/apk/debug/app-debug.apk
+          name: ClosePaw-GPT-Voice-signed-${{ github.run_number }}
+          path: ClosePaw-GPT-Voice-${{ github.run_number }}.apk
           if-no-files-found: error
+          retention-days: 90
