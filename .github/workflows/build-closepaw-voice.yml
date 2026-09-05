@@ -57,6 +57,7 @@ jobs:
           mkdir -p closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice
           mkdir -p closepaw/app/src/main/kotlin/ai/closepaw/ui/settings
           mkdir -p closepaw/app/src/androidTest/kotlin/ai/closepaw/ui/capsule/voice
+          mkdir -p closepaw/app/src/androidTest/assets
           cp custom/HandsFreeCommandParser.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/HandsFreeCommandParser.kt
           cp custom/HandsFreeVoiceService.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/HandsFreeVoiceService.kt
           cp custom/HandsFreeSpeaker.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/HandsFreeSpeaker.kt
@@ -66,6 +67,7 @@ jobs:
           cp custom/HandsFreeIntentGate.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/capsule/voice/HandsFreeIntentGate.kt
           cp custom/VoiceRuntimeSettingsPage.kt closepaw/app/src/main/kotlin/ai/closepaw/ui/settings/VoiceRuntimeSettingsPage.kt
           cp custom/HandsFreeSafetyInstrumentedTest.kt closepaw/app/src/androidTest/kotlin/ai/closepaw/ui/capsule/voice/HandsFreeSafetyInstrumentedTest.kt
+          cp custom/VoiceRuntimeUiInstrumentedTest.kt closepaw/app/src/androidTest/kotlin/ai/closepaw/ui/capsule/voice/VoiceRuntimeUiInstrumentedTest.kt
 
           # Reuse the proven Android microWakeWord frontend implementation from a pinned Apache-2.0
           # Teya revision. It vendors the Apache-2.0 TFLite-Micro frontend plus BSD-3-Clause kissfft.
@@ -94,12 +96,36 @@ jobs:
           cp patch_microwakeword_build.py closepaw/patch_microwakeword_build.py
           cp patch_handsfree_safety_panel.py closepaw/patch_handsfree_safety_panel.py
           cp patch_handsfree_start_order.py closepaw/patch_handsfree_start_order.py
+          cp patch_handsfree_pipeline_reliability.py closepaw/patch_handsfree_pipeline_reliability.py
           cd closepaw
           python3 patch_handsfree_integration.py
           python3 patch_handsfree_fix.py
           python3 patch_microwakeword_build.py
           python3 patch_handsfree_safety_panel.py
           python3 patch_handsfree_start_order.py
+          python3 patch_handsfree_pipeline_reliability.py
+
+      - name: Generate synthetic Hey Jarvis speech fixture
+        run: |
+          if ! command -v espeak-ng >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y espeak-ng ffmpeg
+          fi
+          test -x "$(command -v ffmpeg)" || { echo 'ffmpeg missing'; exit 1; }
+          OUT="$GITHUB_WORKSPACE/closepaw/app/src/androidTest/assets/hey_jarvis_test.pcm"
+          : > "$OUT"
+          i=0
+          for spec in "en-us 135 35" "en-us 155 50" "en-us 175 65" "en-gb 140 40" "en-gb 165 60"; do
+            set -- $spec
+            voice="$1"; speed="$2"; pitch="$3"
+            espeak-ng -v "$voice" -s "$speed" -p "$pitch" -w "/tmp/jarvis-$i.wav" "Hey Jarvis"
+            ffmpeg -v error -y -i "/tmp/jarvis-$i.wav" -ar 24000 -ac 1 -f s16le "/tmp/jarvis-$i.pcm"
+            cat "/tmp/jarvis-$i.pcm" >> "$OUT"
+            dd if=/dev/zero bs=48000 count=1 status=none >> "$OUT"
+            i=$((i+1))
+          done
+          test -s "$OUT"
+          echo "Synthetic wake fixture bytes: $(wc -c < "$OUT")"
 
       - name: Run unit tests
         working-directory: closepaw
@@ -111,7 +137,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: Run hands-free Android smoke tests
+      - name: Run hands-free Android speech + UI sandbox
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -119,7 +145,14 @@ jobs:
           profile: pixel_6
           disable-animations: true
           working-directory: closepaw
-          script: ./gradlew :app:connectedDebugAndroidTest --stacktrace -Pandroid.testInstrumentationRunnerArguments.class=ai.closepaw.ui.capsule.voice.HandsFreeSafetyInstrumentedTest
+          script: |
+            set +e
+            ./gradlew :app:connectedDebugAndroidTest --stacktrace \
+              -Pandroid.testInstrumentationRunnerArguments.class=ai.closepaw.ui.capsule.voice.HandsFreeSafetyInstrumentedTest,ai.closepaw.ui.capsule.voice.VoiceRuntimeUiInstrumentedTest
+            STATUS=$?
+            echo "----- relevant emulator logcat -----"
+            adb logcat -d -v threadtime | grep -E 'AndroidRuntime|HandsFree|ClosePaw|RealtimeCommandTranscriber|CodexResponseClient' | tail -n 500 || true
+            exit $STATUS
 
       - name: Set custom version
         working-directory: closepaw
