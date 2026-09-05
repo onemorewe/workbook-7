@@ -59,7 +59,10 @@ internal class HandsFreeIntentGate(
                 inputItems = input,
                 tools = emptyList(),
                 model = selected,
-            )
+            ).also {
+                // OAuth works again: stop forcing API execution for subsequent hands-free tasks.
+                activeFallbackModel = null
+            }
         } catch (limited: RateLimitException) {
             val apiEntry = catalog.modelsFor(LLMProvider.OPENAI_API)
                 .firstOrNull { it.modelId == selectedEntry.modelId }
@@ -73,6 +76,7 @@ internal class HandsFreeIntentGate(
                 "ChatGPT usage limit reached and OpenAI API key fallback is not configured"
             }
 
+            activeFallbackModel = apiEntry.name
             HandsFreeDebugRelay.publish(
                 "intent-gate-fallback",
                 "ChatGPT usage limit reached; retrying intent gate via OpenAI API model ${apiEntry.name}",
@@ -123,6 +127,14 @@ internal class HandsFreeIntentGate(
     }
 
     companion object {
+        @Volatile private var activeFallbackModel: String? = null
+
+        /**
+         * API model selected by the most recent OAuth rate-limit fallback. Agent execution uses
+         * the same route so the intent gate cannot succeed and then immediately die on OAuth.
+         */
+        fun activeApiFallbackModel(): String? = activeFallbackModel
+
         private val PROMPT = """
             You are the turn-completion and intent gate for a hands-free driving assistant.
             The input is the cumulative live transcript after the wake word.
