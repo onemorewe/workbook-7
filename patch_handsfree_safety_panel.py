@@ -117,11 +117,18 @@ new_companion = '''        private val _commandSessionActive = MutableStateFlow(
             val entry = runCatching {
                 ModelCatalogRepositoryHolder.get(context).catalog.value.resolveOrNull(selected)
             }.getOrNull() ?: return "Selected reasoning model '$selected' is not available in the model catalog"
-            if (entry.provider != LLMProvider.OPENAI_CODEX) {
-                return "Hands-free intent gate requires a ChatGPT subscription model; '$selected' uses ${entry.provider}"
-            }
-            if (!runCatching { auth.has(LLMProvider.OPENAI_CODEX) }.getOrDefault(false)) {
-                return "ChatGPT sign-in is required for the hands-free intent gate"
+            when (entry.provider) {
+                LLMProvider.OPENAI_CODEX -> {
+                    if (!runCatching { auth.has(LLMProvider.OPENAI_CODEX) }.getOrDefault(false)) {
+                        return "ChatGPT sign-in is required for the hands-free intent gate"
+                    }
+                }
+                LLMProvider.OPENAI_API -> {
+                    if (!runCatching { auth.has(LLMProvider.OPENAI_API) }.getOrDefault(false)) {
+                        return "OpenAI API key is required for the hands-free intent gate"
+                    }
+                }
+                else -> return "Hands-free intent gate requires an OpenAI ChatGPT/API model; '$selected' uses ${entry.provider}"
             }
             return null
         }
