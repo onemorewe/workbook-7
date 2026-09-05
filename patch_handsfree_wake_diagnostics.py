@@ -177,9 +177,9 @@ replace_once(
 ''',
 )
 
-# If the intent gate discovers that ChatGPT/Codex is usage-limited, execution must use the same
-# mirrored API model. Otherwise the gate would succeed via API and the agent would immediately fail
-# again on the exhausted OAuth route. A session is reusable only if it already has the desired model.
+# Agent execution must use the model that actually completed the intent gate. This keeps OAuth-first
+# execution on OAuth, and a true rate/usage-limit fallback on the mirrored API model. A session is
+# reusable only when it already has that exact model.
 agent = root / 'app/src/main/kotlin/ai/closepaw/app/AgentService.kt'
 replace_once(
     agent,
@@ -191,7 +191,7 @@ replace_once(
 ''',
     '''        val current = session
         val desiredHandsFreeModel =
-            ai.closepaw.ui.capsule.voice.HandsFreeIntentGate.activeApiFallbackModel()
+            ai.closepaw.ui.capsule.voice.HandsFreeIntentGate.activeExecutionModel()
                 ?: AppSettingsStore(this).load().selectedModel
         val reusableHandsFreeSession = current != null &&
             current.state.value != SessionState.Shutdown &&
@@ -212,10 +212,10 @@ replace_once(
     '''                                mainModel = settings.selectedModel,
 ''',
     '''                                mainModel = if (handsFree) {
-                                    ai.closepaw.ui.capsule.voice.HandsFreeIntentGate.activeApiFallbackModel()
+                                    ai.closepaw.ui.capsule.voice.HandsFreeIntentGate.activeExecutionModel()
                                         ?: settings.selectedModel
                                 } else settings.selectedModel,
 ''',
 )
 
-print('Hands-free wake diagnostics + audio cues + API fallback execution routing applied')
+print('Hands-free wake diagnostics + audio cues + active execution routing applied')
