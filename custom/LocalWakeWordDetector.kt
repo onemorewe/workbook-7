@@ -1,112 +1,169 @@
 package ai.closepaw.ui.capsule.voice
 
 import android.content.Context
-import java.io.IOException
-import kotlin.coroutines.resume
-import kotlinx.coroutines.suspendCancellableCoroutine
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import org.json.JSONObject
-import org.vosk.Model
-import org.vosk.Recognizer
-import org.vosk.android.StorageService
+import org.tensorflow.lite.DataType
+import org.tensorflow.lite.Interpreter
 
 /**
- * Local-only wake detector used while hands-free mode is idle.
+ * Tiny local-only microWakeWord detector.
  *
- * Vosk is intentionally constrained to a tiny Russian grammar. It is a practical v1 wake engine:
- * nothing is uploaded before a wake word is detected. The recognizer consumes 16 kHz PCM; the
- * service records at 24 kHz for Realtime transcription, so frames are downsampled here.
- *
- * This is deliberately isolated behind one class so it can later be replaced by a trained
- * microWakeWord model without touching the Realtime/intent pipeline.
+ * Raw idle microphone audio never leaves the device. 24 kHz PCM from the shared hands-free
+ * recorder is downsampled to 16 kHz, converted to the exact forty-bin TFLite-Micro frontend
+ * features used during microWakeWord training, then passed through a stateful quantized streaming
+ * CNN. The model/manifest are build assets named wake_word.tflite and wake_word.json.
  */
 internal class LocalWakeWordDetector(
     private val context: Context,
 ) : AutoCloseable {
     companion object {
-        const val ASSET_MODEL = "vosk-model-small-ru-0.22"
-        private const val TARGET_DIR = "vosk-wake-ru-0.22"
-        private const val VOSK_RATE = 16_000f
-        private const val GRAMMAR = "[\"алёша\",\"алеша\",\"лёша\",\"леша\",\"[unk]\"]"
+        const val MODEL_ASSET = "wake_word.tflite"
+        const val MANIFEST_ASSET = "wake_word.json"
     }
 
-    @Volatile private var model: Model? = null
-    @Volatile private var recognizer: Recognizer? = null
+    private var frontend: MicroFrontend? = null
+    private var interpreter: Interpreter? = null
+    private var inputScale = 1f
+    private var inputZeroPoint = 0
+    private var outputScale = 1f
+    private var outputZeroPoint = 0
+    private var inputFrames = 0
+    private var cutoff = 0.9f
+    private var slidingWindow = 5
+    private val pendingFrames = ArrayDeque<FloatArray>()
+    private val recentProbabilities = ArrayDeque<Float>()
+    private var wakeInput: ByteBuffer? = null
+    private var wakeOutput: ByteBuffer? = null
 
-    suspend fun initialize(): Result<Unit> = suspendCancellableCoroutine { continuation ->
-        StorageService.unpack(
-            context.applicationContext,
-            ASSET_MODEL,
-            TARGET_DIR,
-            { loaded ->
-                if (!continuation.isActive) {
-                    runCatching { loaded.close() }
-                    return@unpack
-                }
-                try {
-                    val r = Recognizer(loaded, VOSK_RATE, GRAMMAR)
-                    model = loaded
-                    recognizer = r
-                    continuation.resume(Result.success(Unit))
-                } catch (t: Throwable) {
-                    runCatching { loaded.close() }
-                    continuation.resume(Result.failure(t))
-                }
-            },
-            { error: IOException ->
-                if (continuation.isActive) continuation.resume(Result.failure(error))
-            },
+    suspend fun initialize(): Result<Unit> = runCatching {
+        val manifest = JSONObject(
+            context.assets.open(MANIFEST_ASSET).bufferedReader(Charsets.UTF_8).use { it.readText() }
         )
+        val micro = manifest.getJSONObject("micro")
+        cutoff = micro.optDouble("probability_cutoff", 0.9).toFloat()
+        slidingWindow = maxOf(
+            1,
+            micro.optInt(
+                "sliding_window_average_size",
+                micro.optInt("sliding_window_size", 5),
+            ),
+        )
+
+        val modelBytes = context.assets.open(MODEL_ASSET).use { it.readBytes() }
+        val model = ByteBuffer.allocateDirect(modelBytes.size)
+            .order(ByteOrder.nativeOrder())
+            .apply {
+                put(modelBytes)
+                rewind()
+            }
+
+        val interp = Interpreter(model, Interpreter.Options().apply { setNumThreads(2) })
+        interp.allocateTensors()
+
+        val inputTensor = interp.getInputTensor(0)
+        val outputTensor = interp.getOutputTensor(0)
+        val inputShape = inputTensor.shape()
+        val outputShape = outputTensor.shape()
+        require(inputShape.size == 3 && inputShape[0] == 1 && inputShape[2] == MicroFrontend.FEATURE_SIZE) {
+            "Unexpected microWakeWord input shape: ${inputShape.joinToString()}"
+        }
+        require(outputShape.size == 2 && outputShape[0] == 1 && outputShape[1] == 1) {
+            "Unexpected microWakeWord output shape: ${outputShape.joinToString()}"
+        }
+        require(inputTensor.dataType() == DataType.INT8) {
+            "microWakeWord input must be INT8, got ${inputTensor.dataType()}"
+        }
+        require(outputTensor.dataType() == DataType.UINT8) {
+            "microWakeWord output must be UINT8, got ${outputTensor.dataType()}"
+        }
+
+        inputFrames = inputShape[1]
+        val iq = inputTensor.quantizationParams()
+        inputScale = iq.scale
+        inputZeroPoint = iq.zeroPoint
+        val oq = outputTensor.quantizationParams()
+        outputScale = oq.scale
+        outputZeroPoint = oq.zeroPoint
+
+        val localFrontend = MicroFrontend()
+        require(localFrontend.isInitialized) { "microWakeWord frontend failed to initialize" }
+
+        wakeInput = ByteBuffer.allocateDirect(inputFrames * MicroFrontend.FEATURE_SIZE)
+            .order(ByteOrder.nativeOrder())
+        wakeOutput = ByteBuffer.allocateDirect(1).order(ByteOrder.nativeOrder())
+        frontend = localFrontend
+        interpreter = interp
+        reset()
     }
 
-    /** Feed one 24 kHz mono PCM16 frame. Returns true once the wake word is recognized. */
+    /** Feed one 24 kHz mono PCM16 frame. Returns true only after the trained wake model fires. */
     fun accept24k(samples: ShortArray, length: Int = samples.size): Boolean {
-        val r = recognizer ?: return false
-        if (length <= 0) return false
-        val sixteen = downsample24To16(samples, length)
-        return try {
-            val finalized = r.acceptWaveForm(sixteen, sixteen.size)
-            val json = if (finalized) r.result else r.partialResult
-            val obj = JSONObject(json)
-            val text = if (finalized) obj.optString("text", "") else obj.optString("partial", "")
-            if (isWake(text)) {
-                r.reset()
-                true
-            } else {
-                false
+        val localFrontend = frontend ?: return false
+        val interp = interpreter ?: return false
+        val input = wakeInput ?: return false
+        val output = wakeOutput ?: return false
+        if (length <= 0 || inputFrames <= 0) return false
+
+        val sixteenKhz = downsample24To16(samples, length)
+        val frames = localFrontend.processSamples(sixteenKhz)
+        if (frames.isEmpty()) return false
+        pendingFrames.addAll(frames)
+
+        while (pendingFrames.size >= inputFrames) {
+            input.rewind()
+            repeat(inputFrames) {
+                val featureFrame = pendingFrames.removeFirst()
+                for (value in featureFrame) {
+                    val quantized = Math.round(value / inputScale) + inputZeroPoint
+                    input.put(quantized.coerceIn(-128, 127).toByte())
+                }
             }
-        } catch (_: Throwable) {
-            false
+            input.rewind()
+            output.rewind()
+            interp.run(input, output)
+            output.rewind()
+
+            val raw = output.get().toInt() and 0xFF
+            val probability = ((raw - outputZeroPoint) * outputScale).coerceIn(0f, 1f)
+            recentProbabilities.addLast(probability)
+            while (recentProbabilities.size > slidingWindow) recentProbabilities.removeFirst()
+
+            if (recentProbabilities.size == slidingWindow && recentProbabilities.average() >= cutoff) {
+                reset()
+                return true
+            }
         }
+        return false
     }
 
     fun reset() {
-        runCatching { recognizer?.reset() }
+        frontend?.reset()
+        runCatching { interpreter?.resetVariableTensors() }
+        pendingFrames.clear()
+        recentProbabilities.clear()
     }
 
-    private fun isWake(raw: String): Boolean {
-        val s = raw.lowercase().replace('ё', 'е').trim()
-        if (s.isEmpty()) return false
-        return s.split(Regex("\\s+")).any { it == "алеша" || it == "леша" }
-    }
-
-    /** Exact-ratio resampler for 24 kHz -> 16 kHz wake recognition. */
+    /** Exact-ratio resampler for our fixed twenty-millisecond 24 kHz frames. */
     private fun downsample24To16(input: ShortArray, length: Int): ShortArray {
-        val outSize = (length * 2) / 3
+        val safeLength = length.coerceAtMost(input.size)
+        val outSize = (safeLength * 2) / 3
         if (outSize <= 0) return ShortArray(0)
-        val out = ShortArray(outSize)
-        for (i in 0 until outSize) {
-            val src = (i * 3) / 2
-            out[i] = input[src.coerceAtMost(length - 1)]
+        return ShortArray(outSize) { index ->
+            val source = (index * 3) / 2
+            input[source.coerceAtMost(safeLength - 1)]
         }
-        return out
     }
 
     override fun close() {
-        val r = recognizer
-        recognizer = null
-        runCatching { r?.close() }
-        val m = model
-        model = null
-        runCatching { m?.close() }
+        runCatching { interpreter?.close() }
+        interpreter = null
+        frontend?.close()
+        frontend = null
+        wakeInput = null
+        wakeOutput = null
+        pendingFrames.clear()
+        recentProbabilities.clear()
     }
 }
