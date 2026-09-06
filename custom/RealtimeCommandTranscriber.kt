@@ -10,7 +10,6 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
-import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -34,10 +33,6 @@ internal class RealtimeCommandTranscriber(
     }
 
     companion object {
-        // Transcription-only Realtime sessions are selected with intent=transcription. The
-        // transcription model itself belongs in session.audio.input.transcription.model below;
-        // putting gpt-live-transcribe in the URL's model= parameter makes the server treat it as
-        // the root realtime/conversation model and reject the connection as invalid_model.
         private const val URL = "wss://api.openai.com/v1/realtime?intent=transcription"
         private const val MAX_PENDING_FRAMES = 125 // roughly 2.5 s at 20 ms/frame
     }
@@ -80,12 +75,15 @@ internal class RealtimeCommandTranscriber(
     }
 
     private fun configure(ws: WebSocket) {
+        // gpt-live-transcribe currently rejects turn_detection. Hands-free needs server_vad for
+        // pause/commit semantics, so use the transcription model that the Realtime transcription
+        // contract explicitly supports together with server_vad.
         val transcription = JSONObject()
-            .put("model", "gpt-live-transcribe")
-            .put("prompt", "Driving voice command. The speaker may mix Russian and English. Preserve app names, artist names, song titles, technical terms, and proper nouns. Wake word may be Алёша/Alyosha.")
-            .put("keywords", JSONArray(listOf("Алёша", "Alyosha", "Yandex Music", "ChatGPT")))
-            .put("languages", JSONArray(listOf("ru", "en")))
-            .put("delay", "low")
+            .put("model", "gpt-4o-transcribe")
+            .put(
+                "prompt",
+                "Driving voice command. The speaker may mix Russian and English. Preserve app names, artist names, song titles, technical terms, proper nouns, and the wake word Алёша/Alyosha.",
+            )
         val turnDetection = JSONObject()
             .put("type", "server_vad")
             .put("threshold", 0.5)
@@ -186,9 +184,6 @@ internal class RealtimeCommandTranscriber(
                         composeTranscriptLocked()
                     }
                     listener.onLiveTranscript(live)
-                    // A completed transcription only exists after the input item was committed.
-                    // With server VAD, that commit is the end-of-turn boundary. Do not require a
-                    // separate speech_stopped event as a second gate; event ordering can vary.
                     maybeDeliver(id)
                 }
             }
