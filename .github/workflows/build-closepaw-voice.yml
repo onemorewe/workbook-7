@@ -191,13 +191,16 @@ jobs:
         working-directory: closepaw
         run: ./gradlew :app:testDebugUnitTest --stacktrace
 
+      # Full emulator smoke remains available, but does not block every dev push/APK iteration.
       - name: Enable KVM for Android emulator
+        if: github.event_name == 'workflow_dispatch'
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
       - name: Run hands-free Android UI + parser sandbox
+        if: github.event_name == 'workflow_dispatch'
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
