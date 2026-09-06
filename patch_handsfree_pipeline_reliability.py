@@ -126,10 +126,9 @@ if end_cue not in wd:
     raise SystemExit('End audio cue patch anchor not found')
 wake_patch.write_text(wd.replace(end_cue, 'ToneGenerator(AudioManager.STREAM_MUSIC, 55)', 1), encoding='utf-8')
 
-# gpt-live-transcribe currently rejects server_vad in transcription-only Realtime sessions on the
-# live API. Keep the existing server-VAD turn semantics, but use the VAD-compatible transcription
-# model until a proper client-side VAD + manual input_audio_buffer.commit path is implemented and
-# covered by a live OpenAI contract test.
+# Keep server-VAD turn semantics on the VAD-compatible transcription model. This patch is
+# deliberately idempotent because the checked-in custom source may already contain the target
+# model/configuration.
 realtime = Path('app/src/main/kotlin/ai/closepaw/ui/capsule/voice/RealtimeCommandTranscriber.kt')
 r = realtime.read_text(encoding='utf-8')
 old_transcription = '''        val transcription = JSONObject()
@@ -143,18 +142,21 @@ new_transcription = '''        val transcription = JSONObject()
             .put("model", "gpt-4o-transcribe")
             .put("prompt", "Driving voice command. The speaker may mix Russian and English. Preserve app names, artist names, song titles, technical terms, and proper nouns. Wake word may be Алёша/Alyosha.")
 '''
-if old_transcription not in r:
-    raise SystemExit('Realtime transcription model anchor not found')
-r = r.replace(old_transcription, new_transcription, 1)
+if old_transcription in r:
+    r = r.replace(old_transcription, new_transcription, 1)
+elif new_transcription not in r:
+    raise SystemExit('Realtime transcription configuration is neither legacy nor expected target')
 realtime.write_text(r, encoding='utf-8')
 
 settings = Path('app/src/main/kotlin/ai/closepaw/ui/settings/VoiceRuntimeSettingsPage.kt')
 v = settings.read_text(encoding='utf-8')
 old_label = '"Live STT: gpt-live-transcribe · ${if (openAiKeyConnected) "OpenAI API key connected" else "OpenAI API key missing"}",'
 new_label = '"Live STT: gpt-4o-transcribe · server VAD · ${if (openAiKeyConnected) "OpenAI API key connected" else "OpenAI API key missing"}",'
-if old_label not in v:
-    raise SystemExit('Voice runtime STT label anchor not found')
-settings.write_text(v.replace(old_label, new_label, 1), encoding='utf-8')
+if old_label in v:
+    v = v.replace(old_label, new_label, 1)
+elif new_label not in v:
+    raise SystemExit('Voice runtime STT label is neither legacy nor expected target')
+settings.write_text(v, encoding='utf-8')
 
 # Black-box UI smoke test clicks through the real app with UiAutomator.
 gradle = Path('app/build.gradle.kts')
