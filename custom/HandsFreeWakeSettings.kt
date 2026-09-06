@@ -11,14 +11,21 @@ internal object HandsFreeWakeSettings {
     const val MIN_THRESHOLD = 0.50f
     const val MAX_THRESHOLD = 0.99f
 
+    @Volatile private var cachedThreshold: Float? = null
+
     fun load(context: Context): Float {
-        val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        return prefs.getFloat(KEY_THRESHOLD, DEFAULT_THRESHOLD)
+        cachedThreshold?.let { return it }
+        val stored = context.applicationContext
+            .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getFloat(KEY_THRESHOLD, DEFAULT_THRESHOLD)
             .coerceIn(MIN_THRESHOLD, MAX_THRESHOLD)
+        cachedThreshold = stored
+        return stored
     }
 
     fun save(context: Context, value: Float): Float {
         val normalized = value.coerceIn(MIN_THRESHOLD, MAX_THRESHOLD)
+        cachedThreshold = normalized
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
             .putFloat(KEY_THRESHOLD, normalized)
