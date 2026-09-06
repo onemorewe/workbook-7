@@ -51,4 +51,12 @@ class WakeSensitivityPolicyTest {
             )
         )
     }
+
+    @Test
+    fun realtimeHandsFreeContractUsesCommittedTurnModelWithServerVad() {
+        assertEquals("gpt-transcribe", HandsFreeRealtimeContract.TRANSCRIPTION_MODEL)
+        assertEquals("server_vad", HandsFreeRealtimeContract.TURN_DETECTION_TYPE)
+        assertEquals(24_000, HandsFreeRealtimeContract.SAMPLE_RATE)
+        assertEquals(600, HandsFreeRealtimeContract.SILENCE_DURATION_MS)
+    }
 }
