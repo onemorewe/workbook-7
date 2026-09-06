@@ -34,6 +34,7 @@ import ai.closepaw.app.AuthStoreHolder
 import ai.closepaw.llm.AuthMode
 import ai.closepaw.llm.LLMProvider
 import ai.closepaw.llm.ModelCatalog
+import ai.closepaw.ui.capsule.voice.HandsFreeRealtimeContract
 import ai.closepaw.ui.capsule.voice.HandsFreeVoiceService
 import ai.closepaw.ui.capsule.voice.HandsFreeWakeSettings
 import ai.closepaw.ui.capsule.voice.VoiceTranscriptionSettings
@@ -173,7 +174,7 @@ internal fun VoiceRuntimeSettingsPage(
                     lines = listOf(
                         "Runtime: $runtimeStatus",
                         "Wake: microWakeWord · $wakeWord · local only · threshold ${formatWakeThreshold(wakeThreshold)}",
-                        "Live STT: gpt-4o-transcribe · ${if (openAiKeyConnected) "OpenAI API key connected" else "OpenAI API key missing"}",
+                        "Live STT: ${HandsFreeRealtimeContract.TRANSCRIPTION_MODEL} · ${if (openAiKeyConnected) "OpenAI API key connected" else "OpenAI API key missing"}",
                         "Intent gate: $gateDescription",
                         "Answer voice: Android TTS · $ttsEngine · language auto RU/EN",
                     ),
