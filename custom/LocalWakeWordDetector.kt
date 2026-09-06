@@ -18,18 +18,27 @@ internal object HandsFreeWakeSettings {
 
     @Volatile private var cachedThreshold: Float? = null
 
+    fun normalize(value: Float): Float = value.coerceIn(MIN_THRESHOLD, MAX_THRESHOLD)
+
+    /** Pure trigger rule so sensitivity semantics are covered by fast JVM unit tests. */
+    fun shouldTrigger(probabilities: Collection<Float>, windowSize: Int, threshold: Float): Boolean =
+        windowSize > 0 &&
+            probabilities.size == windowSize &&
+            probabilities.average() >= normalize(threshold)
+
     fun load(context: Context): Float {
         cachedThreshold?.let { return it }
-        val stored = context.applicationContext
-            .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getFloat(KEY_THRESHOLD, DEFAULT_THRESHOLD)
-            .coerceIn(MIN_THRESHOLD, MAX_THRESHOLD)
+        val stored = normalize(
+            context.applicationContext
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getFloat(KEY_THRESHOLD, DEFAULT_THRESHOLD)
+        )
         cachedThreshold = stored
         return stored
     }
 
     fun save(context: Context, value: Float): Float {
-        val normalized = value.coerceIn(MIN_THRESHOLD, MAX_THRESHOLD)
+        val normalized = normalize(value)
         cachedThreshold = normalized
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
@@ -65,7 +74,7 @@ internal class LocalWakeWordDetector(
     private var outputScale = 1f
     private var outputZeroPoint = 0
     private var inputFrames = 0
-    private var cutoff = 0.9f
+    private var cutoff = HandsFreeWakeSettings.DEFAULT_THRESHOLD
     private var slidingWindow = 5
     private val pendingFrames = ArrayDeque<FloatArray>()
     private val recentProbabilities = ArrayDeque<Float>()
@@ -138,7 +147,7 @@ internal class LocalWakeWordDetector(
     }
 
     fun setProbabilityCutoff(value: Float) {
-        cutoff = value.coerceIn(HandsFreeWakeSettings.MIN_THRESHOLD, HandsFreeWakeSettings.MAX_THRESHOLD)
+        cutoff = HandsFreeWakeSettings.normalize(value)
         recentProbabilities.clear()
     }
 
@@ -179,7 +188,7 @@ internal class LocalWakeWordDetector(
             recentProbabilities.addLast(probability)
             while (recentProbabilities.size > slidingWindow) recentProbabilities.removeFirst()
 
-            if (recentProbabilities.size == slidingWindow && recentProbabilities.average() >= cutoff) {
+            if (HandsFreeWakeSettings.shouldTrigger(recentProbabilities, slidingWindow, cutoff)) {
                 reset()
                 return true
             }
