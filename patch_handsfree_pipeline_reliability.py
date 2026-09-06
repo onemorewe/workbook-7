@@ -110,6 +110,22 @@ if old not in s:
 
 p.write_text(s.replace(old, new, 1), encoding='utf-8')
 
+# Assistant cues must follow the user's media volume, not notification/DND volume. The wake cue is
+# defined in the service itself; the end cue is injected later by the wake-diagnostics patch, so
+# update that patch before it is executed too.
+s = p.read_text(encoding='utf-8')
+wake_cue = 'ToneGenerator(AudioManager.STREAM_NOTIFICATION, 55)'
+if wake_cue not in s:
+    raise SystemExit('Wake audio cue anchor not found')
+p.write_text(s.replace(wake_cue, 'ToneGenerator(AudioManager.STREAM_MUSIC, 65)', 1), encoding='utf-8')
+
+wake_patch = Path('patch_handsfree_wake_diagnostics.py')
+wd = wake_patch.read_text(encoding='utf-8')
+end_cue = 'ToneGenerator(AudioManager.STREAM_NOTIFICATION, 45)'
+if end_cue not in wd:
+    raise SystemExit('End audio cue patch anchor not found')
+wake_patch.write_text(wd.replace(end_cue, 'ToneGenerator(AudioManager.STREAM_MUSIC, 55)', 1), encoding='utf-8')
+
 # gpt-live-transcribe currently rejects server_vad in transcription-only Realtime sessions on the
 # live API. Keep the existing server-VAD turn semantics, but use the VAD-compatible transcription
 # model until a proper client-side VAD + manual input_audio_buffer.commit path is implemented and
