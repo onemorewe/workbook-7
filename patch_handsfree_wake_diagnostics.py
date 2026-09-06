@@ -11,18 +11,18 @@ def replace_once(path: Path, old: str, new: str):
 
 
 # Expose only numeric detector diagnostics. No microphone audio leaves the detector.
+# Anchor before the cutoff declaration so user-tunable/default threshold changes do not break this
+# build-time diagnostics patch.
 detector = root / 'app/src/main/kotlin/ai/closepaw/ui/capsule/voice/LocalWakeWordDetector.kt'
 replace_once(
     detector,
     '''    private var outputScale = 1f
     private var outputZeroPoint = 0
     private var inputFrames = 0
-    private var cutoff = 0.9f
 ''',
     '''    private var outputScale = 1f
     private var outputZeroPoint = 0
     private var inputFrames = 0
-    private var cutoff = 0.9f
     private var latestProbabilityValue = 0f
     private var peakProbabilityValue = 0f
 
