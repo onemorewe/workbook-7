@@ -49,7 +49,7 @@ internal class LocalWakeWordDetector(
         require(micro.optInt("feature_step_size", MicroFrontend.STEP_SIZE_MS) == MicroFrontend.STEP_SIZE_MS) {
             "microWakeWord manifest feature_step_size must be ${MicroFrontend.STEP_SIZE_MS} ms"
         }
-        cutoff = micro.optDouble("probability_cutoff", 0.9).toFloat()
+        cutoff = HandsFreeWakeSettings.load(context)
         slidingWindow = maxOf(
             1,
             micro.optInt(
@@ -103,6 +103,11 @@ internal class LocalWakeWordDetector(
         frontend = localFrontend
         interpreter = interp
         reset()
+    }
+
+    fun setProbabilityCutoff(value: Float) {
+        cutoff = value.coerceIn(HandsFreeWakeSettings.MIN_THRESHOLD, HandsFreeWakeSettings.MAX_THRESHOLD)
+        recentProbabilities.clear()
     }
 
     /** Feed one 24 kHz mono PCM16 frame. Returns true only after the trained wake model fires. */
