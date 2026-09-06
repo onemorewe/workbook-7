@@ -16,6 +16,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -34,10 +35,12 @@ import ai.closepaw.llm.AuthMode
 import ai.closepaw.llm.LLMProvider
 import ai.closepaw.llm.ModelCatalog
 import ai.closepaw.ui.capsule.voice.HandsFreeVoiceService
+import ai.closepaw.ui.capsule.voice.HandsFreeWakeSettings
 import ai.closepaw.ui.capsule.voice.VoiceTranscriptionSettings
 import ai.closepaw.ui.theme.Fleuron
 import ai.closepaw.ui.theme.PageMastheadDrillDown
 import ai.closepaw.ui.theme.closePaw
+import kotlin.math.roundToInt
 import org.json.JSONObject
 
 @Composable
@@ -49,6 +52,7 @@ internal fun VoiceRuntimeSettingsPage(
 ) {
     val context = LocalContext.current
     var voiceModel by remember { mutableStateOf(VoiceTranscriptionSettings.load(context)) }
+    var wakeThreshold by remember(context) { mutableStateOf(HandsFreeWakeSettings.load(context)) }
     val runtimeStatus by HandsFreeVoiceService.runtimeStatus.collectAsState()
     val lastError by HandsFreeVoiceService.lastError.collectAsState()
     val handsFreeEnabled = HandsFreeVoiceService.isEnabled(context)
@@ -168,11 +172,33 @@ internal fun VoiceRuntimeSettingsPage(
                     title = if (handsFreeEnabled) "ON" else "OFF",
                     lines = listOf(
                         "Runtime: $runtimeStatus",
-                        "Wake: microWakeWord · $wakeWord · local only",
-                        "Live STT: gpt-live-transcribe · ${if (openAiKeyConnected) "OpenAI API key connected" else "OpenAI API key missing"}",
+                        "Wake: microWakeWord · $wakeWord · local only · threshold ${formatWakeThreshold(wakeThreshold)}",
+                        "Live STT: gpt-4o-transcribe · ${if (openAiKeyConnected) "OpenAI API key connected" else "OpenAI API key missing"}",
                         "Intent gate: $gateDescription",
                         "Answer voice: Android TTS · $ttsEngine · language auto RU/EN",
                     ),
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = "Wake threshold: ${formatWakeThreshold(wakeThreshold)}",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Slider(
+                    value = wakeThreshold,
+                    onValueChange = { value ->
+                        wakeThreshold = (value * 100f).roundToInt() / 100f
+                    },
+                    onValueChangeFinished = {
+                        wakeThreshold = HandsFreeWakeSettings.save(context, wakeThreshold)
+                    },
+                    valueRange = HandsFreeWakeSettings.MIN_THRESHOLD..HandsFreeWakeSettings.MAX_THRESHOLD,
+                    steps = 48,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    text = "Lower = easier to wake; higher = fewer false triggers. Changes apply live.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 val error = localStartError ?: lastError
                 if (!error.isNullOrBlank()) {
@@ -229,6 +255,9 @@ private fun RuntimeCard(title: String, lines: List<String>) {
         }
     }
 }
+
+private fun formatWakeThreshold(value: Float): String =
+    ((value * 100f).roundToInt() / 100f).toString()
 
 private fun authDescription(provider: LLMProvider?, credentialPresent: Boolean): String = when (provider?.mode) {
     AuthMode.OAuth -> if (credentialPresent) "ChatGPT subscription · OAuth connected" else "ChatGPT subscription · signed out"
