@@ -118,6 +118,11 @@ internal class LocalWakeWordDetector(
         val output = wakeOutput ?: return false
         if (length <= 0 || inputFrames <= 0) return false
 
+        // Same-process settings are cached in memory, so this is just a volatile read in the hot
+        // path. Moving the slider in Voice & Runtime changes wake sensitivity immediately without
+        // restarting the service or reinstalling the APK.
+        cutoff = HandsFreeWakeSettings.load(context)
+
         val sixteenKhz = downsample24To16(samples, length)
         val frames = localFrontend.processSamples(sixteenKhz)
         if (frames.isEmpty()) return false
