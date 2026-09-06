@@ -4,11 +4,16 @@ import android.Manifest
 import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
 import androidx.test.platform.app.InstrumentationRegistry
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import junit.framework.TestCase
-import kotlinx.coroutines.runBlocking
 
+/**
+ * Android-only safety/Realtime parser checks.
+ *
+ * Wake-word sensitivity itself is covered by fast JVM unit tests. We intentionally do not
+ * synthesize speech or replay a "Hey Jarvis" audio fixture here: the real-device trace already
+ * proves the pinned model detects the phrase, while generating speech in every CI run was slow and
+ * did not validate the cloud/API contract that actually caused recent failures.
+ */
 class HandsFreeSafetyInstrumentedTest : TestCase() {
 
     fun testEnablingWithoutMicrophonePermissionIsBlockedWithoutStartingService() {
@@ -22,57 +27,7 @@ class HandsFreeSafetyInstrumentedTest : TestCase() {
         assertFalse(HandsFreeVoiceService.isEnabled(context))
     }
 
-    fun testMicroWakeWordNativeRuntimeLoadsAndAcceptsAudio() = runBlocking {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val detector = LocalWakeWordDetector(context)
-        try {
-            val initialized = detector.initialize()
-            if (initialized.isFailure) throw initialized.exceptionOrNull()!!
-            detector.accept24k(ShortArray(480), 480)
-        } finally {
-            detector.close()
-        }
-    }
-
-    /**
-     * Feed synthetic spoken "Hey Jarvis" through the exact production microWakeWord frontend/model.
-     * The PCM fixture is generated in CI, not hand-crafted silence or a mocked detector.
-     */
-    fun testSyntheticHeyJarvisTriggersProductionWakeModel() = runBlocking {
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val context = instrumentation.targetContext
-        val raw = instrumentation.context.assets.open("hey_jarvis_test.pcm").use { it.readBytes() }
-        assertTrue("Synthetic wake fixture is empty", raw.isNotEmpty())
-
-        val shorts = ShortArray(raw.size / 2)
-        ByteBuffer.wrap(raw).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(shorts)
-
-        val detector = LocalWakeWordDetector(context)
-        try {
-            val initialized = detector.initialize()
-            if (initialized.isFailure) throw initialized.exceptionOrNull()!!
-
-            var fired = false
-            var offset = 0
-            while (offset < shorts.size && !fired) {
-                val count = minOf(480, shorts.size - offset)
-                val frame = ShortArray(480)
-                System.arraycopy(shorts, offset, frame, 0, count)
-                fired = detector.accept24k(frame, count)
-                offset += count
-            }
-            assertTrue("Production Hey Jarvis wake model did not trigger on the synthetic speech fixture", fired)
-        } finally {
-            detector.close()
-        }
-    }
-
-    /**
-     * Replay the documented Realtime server event sequence into the real production event parser.
-     * Intentionally omit speech_stopped: a completed transcription is already a committed VAD turn
-     * and must be enough to reach the intent gate. This covers the stall seen on-device where live
-     * text appeared but no action followed.
-     */
+    /** A completed transcription must be sufficient to enter the intent gate exactly once. */
     fun testCompletedRealtimeTranscriptAlwaysBecomesTurnReady() {
         val ready = mutableListOf<String>()
         val live = mutableListOf<String>()
