@@ -110,6 +110,36 @@ if old not in s:
 
 p.write_text(s.replace(old, new, 1), encoding='utf-8')
 
+# gpt-live-transcribe currently rejects server_vad in transcription-only Realtime sessions on the
+# live API. Keep the existing server-VAD turn semantics, but use the VAD-compatible transcription
+# model until a proper client-side VAD + manual input_audio_buffer.commit path is implemented and
+# covered by a live OpenAI contract test.
+realtime = Path('app/src/main/kotlin/ai/closepaw/ui/capsule/voice/RealtimeCommandTranscriber.kt')
+r = realtime.read_text(encoding='utf-8')
+old_transcription = '''        val transcription = JSONObject()
+            .put("model", "gpt-live-transcribe")
+            .put("prompt", "Driving voice command. The speaker may mix Russian and English. Preserve app names, artist names, song titles, technical terms, and proper nouns. Wake word may be Алёша/Alyosha.")
+            .put("keywords", JSONArray(listOf("Алёша", "Alyosha", "Yandex Music", "ChatGPT")))
+            .put("languages", JSONArray(listOf("ru", "en")))
+            .put("delay", "low")
+'''
+new_transcription = '''        val transcription = JSONObject()
+            .put("model", "gpt-4o-transcribe")
+            .put("prompt", "Driving voice command. The speaker may mix Russian and English. Preserve app names, artist names, song titles, technical terms, and proper nouns. Wake word may be Алёша/Alyosha.")
+'''
+if old_transcription not in r:
+    raise SystemExit('Realtime transcription model anchor not found')
+r = r.replace(old_transcription, new_transcription, 1)
+realtime.write_text(r, encoding='utf-8')
+
+settings = Path('app/src/main/kotlin/ai/closepaw/ui/settings/VoiceRuntimeSettingsPage.kt')
+v = settings.read_text(encoding='utf-8')
+old_label = '"Live STT: gpt-live-transcribe · ${if (openAiKeyConnected) "OpenAI API key connected" else "OpenAI API key missing"}",'
+new_label = '"Live STT: gpt-4o-transcribe · server VAD · ${if (openAiKeyConnected) "OpenAI API key connected" else "OpenAI API key missing"}",'
+if old_label not in v:
+    raise SystemExit('Voice runtime STT label anchor not found')
+settings.write_text(v.replace(old_label, new_label, 1), encoding='utf-8')
+
 # Black-box UI smoke test clicks through the real app with UiAutomator.
 gradle = Path('app/build.gradle.kts')
 g = gradle.read_text(encoding='utf-8')
