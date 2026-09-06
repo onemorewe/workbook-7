@@ -126,37 +126,25 @@ if end_cue not in wd:
     raise SystemExit('End audio cue patch anchor not found')
 wake_patch.write_text(wd.replace(end_cue, 'ToneGenerator(AudioManager.STREAM_MUSIC, 55)', 1), encoding='utf-8')
 
-# Keep server-VAD turn semantics on the VAD-compatible transcription model. This patch is
-# deliberately idempotent because the checked-in custom source may already contain the target
-# model/configuration.
+# Realtime STT is canonical checked-in source now. Do not rewrite it from a build patch: stale
+# patch-time model rewrites caused the exact class of regression we are trying to prevent. Validate
+# the unit-tested contract and fail loudly if the source drifts.
 realtime = Path('app/src/main/kotlin/ai/closepaw/ui/capsule/voice/RealtimeCommandTranscriber.kt')
 r = realtime.read_text(encoding='utf-8')
-old_transcription = '''        val transcription = JSONObject()
-            .put("model", "gpt-live-transcribe")
-            .put("prompt", "Driving voice command. The speaker may mix Russian and English. Preserve app names, artist names, song titles, technical terms, and proper nouns. Wake word may be Алёша/Alyosha.")
-            .put("keywords", JSONArray(listOf("Алёша", "Alyosha", "Yandex Music", "ChatGPT")))
-            .put("languages", JSONArray(listOf("ru", "en")))
-            .put("delay", "low")
-'''
-new_transcription = '''        val transcription = JSONObject()
-            .put("model", "gpt-4o-transcribe")
-            .put("prompt", "Driving voice command. The speaker may mix Russian and English. Preserve app names, artist names, song titles, technical terms, and proper nouns. Wake word may be Алёша/Alyosha.")
-'''
-if old_transcription in r:
-    r = r.replace(old_transcription, new_transcription, 1)
-elif new_transcription not in r:
-    raise SystemExit('Realtime transcription configuration is neither legacy nor expected target')
-realtime.write_text(r, encoding='utf-8')
+required_realtime = [
+    'const val TRANSCRIPTION_MODEL = "gpt-transcribe"',
+    'const val TURN_DETECTION_TYPE = "server_vad"',
+    '.put("model", HandsFreeRealtimeContract.TRANSCRIPTION_MODEL)',
+    '.put("type", HandsFreeRealtimeContract.TURN_DETECTION_TYPE)',
+]
+missing = [needle for needle in required_realtime if needle not in r]
+if missing:
+    raise SystemExit(f'Realtime transcription contract drifted: missing {missing}')
 
 settings = Path('app/src/main/kotlin/ai/closepaw/ui/settings/VoiceRuntimeSettingsPage.kt')
 v = settings.read_text(encoding='utf-8')
-old_label = '"Live STT: gpt-live-transcribe · ${if (openAiKeyConnected) "OpenAI API key connected" else "OpenAI API key missing"}",'
-new_label = '"Live STT: gpt-4o-transcribe · server VAD · ${if (openAiKeyConnected) "OpenAI API key connected" else "OpenAI API key missing"}",'
-if old_label in v:
-    v = v.replace(old_label, new_label, 1)
-elif new_label not in v:
-    raise SystemExit('Voice runtime STT label is neither legacy nor expected target')
-settings.write_text(v, encoding='utf-8')
+if 'HandsFreeRealtimeContract.TRANSCRIPTION_MODEL' not in v:
+    raise SystemExit('Voice runtime panel no longer displays the canonical hands-free STT model')
 
 # Black-box UI smoke test clicks through the real app with UiAutomator.
 gradle = Path('app/build.gradle.kts')
