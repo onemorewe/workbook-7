@@ -12,6 +12,16 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONObject
 
+/** Pure constants shared by production code and fast JVM contract tests. */
+internal object HandsFreeRealtimeContract {
+    const val TRANSCRIPTION_MODEL = "gpt-transcribe"
+    const val TURN_DETECTION_TYPE = "server_vad"
+    const val SAMPLE_RATE = 24_000
+    const val VAD_THRESHOLD = 0.5
+    const val PREFIX_PADDING_MS = 300
+    const val SILENCE_DURATION_MS = 600
+}
+
 /**
  * One Realtime transcription socket for one wake-word command session.
  *
@@ -75,22 +85,23 @@ internal class RealtimeCommandTranscriber(
     }
 
     private fun configure(ws: WebSocket) {
-        // gpt-live-transcribe currently rejects turn_detection. Hands-free needs server_vad for
-        // pause/commit semantics, so use the transcription model that the Realtime transcription
-        // contract explicitly supports together with server_vad.
+        // gpt-live-transcribe rejects turn detection on the deployed API. Hands-free needs
+        // automatic speech boundaries, so use gpt-transcribe: it supports Realtime transcription
+        // over WebSocket and pairs with server_vad for automatic commit boundaries.
         val transcription = JSONObject()
-            .put("model", "gpt-4o-transcribe")
-            .put(
-                "prompt",
-                "Driving voice command. The speaker may mix Russian and English. Preserve app names, artist names, song titles, technical terms, proper nouns, and the wake word Алёша/Alyosha.",
-            )
+            .put("model", HandsFreeRealtimeContract.TRANSCRIPTION_MODEL)
         val turnDetection = JSONObject()
-            .put("type", "server_vad")
-            .put("threshold", 0.5)
-            .put("prefix_padding_ms", 300)
-            .put("silence_duration_ms", 600)
+            .put("type", HandsFreeRealtimeContract.TURN_DETECTION_TYPE)
+            .put("threshold", HandsFreeRealtimeContract.VAD_THRESHOLD)
+            .put("prefix_padding_ms", HandsFreeRealtimeContract.PREFIX_PADDING_MS)
+            .put("silence_duration_ms", HandsFreeRealtimeContract.SILENCE_DURATION_MS)
         val input = JSONObject()
-            .put("format", JSONObject().put("type", "audio/pcm").put("rate", 24_000))
+            .put(
+                "format",
+                JSONObject()
+                    .put("type", "audio/pcm")
+                    .put("rate", HandsFreeRealtimeContract.SAMPLE_RATE),
+            )
             .put("transcription", transcription)
             .put("turn_detection", turnDetection)
         val session = JSONObject()
