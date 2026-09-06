@@ -7,6 +7,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
+import java.io.ByteArrayOutputStream
 import junit.framework.TestCase
 
 /**
@@ -32,16 +33,28 @@ class VoiceRuntimeUiInstrumentedTest : TestCase() {
             ?: throw AssertionError("No launch intent for ${context.packageName}")
         launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
 
-        // MainActivity has an explicit debug/eval bypass for onboarding. Supplying a present but
-        // null goal exercises that bypass without dispatching an agent task or opening permission
-        // settings, making this deterministic even when another instrumentation test touched app
-        // preferences/process state first.
+        // MainActivity's debug/eval bypass checks presence of both extras. Use an explicit blank
+        // String instead of a nullable extra: hasExtra(EXTRA_GOAL) is then unambiguous after Intent
+        // parceling, while MainActivityIntentPayload still normalizes the blank goal to no task.
         launch.putExtra(MainActivity.EXTRA_FRESH_SESSION, true)
-        launch.putExtra(MainActivity.EXTRA_GOAL, null as String?)
-        context.startActivity(launch)
+        launch.putExtra(MainActivity.EXTRA_GOAL, "")
 
-        val menu = device.wait(Until.findObject(By.desc("Open menu")), 15_000L)
-        assertNotNull("Chat header never appeared through debug onboarding bypass", menu)
+        // startActivitySync waits until the real target Activity is launched instead of racing an
+        // asynchronous Context.startActivity() against the first UiAutomator lookup on a cold VM.
+        instrumentation.startActivitySync(launch)
+        device.waitForIdle()
+
+        val menu = device.wait(Until.findObject(By.desc("Open menu")), 30_000L)
+        if (menu == null) {
+            val hierarchy = ByteArrayOutputStream().use { out ->
+                runCatching { device.dumpWindowHierarchy(out) }
+                out.toString(Charsets.UTF_8.name()).take(12_000)
+            }
+            fail(
+                "Chat header never appeared after synchronous debug launch; " +
+                    "currentPackage=${device.currentPackageName}; hierarchy=$hierarchy"
+            )
+        }
         menu.click()
 
         val settings = device.wait(Until.findObject(By.text("Settings")), 5_000L)
