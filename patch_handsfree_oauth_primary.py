@@ -52,12 +52,14 @@ if old not in text:
 service.write_text(text.replace(old, new, 1), encoding='utf-8')
 print('Hands-free OAuth-primary preflight route applied')
 
-# Apply billing safety, then the final architecture-normalization patch. The final patch deliberately
-# keeps the Jarvis intent gate but removes any coupling between its model route and agent execution.
+# Apply billing safety, unified voice/agent routing, then normalize the small JVM tests to the
+# upstream JUnit4 test runtime. The final architecture keeps the Jarvis intent gate but never lets
+# a ChatGPT usage limit silently switch execution to separately billed OpenAI API.
 for patch_name in (
     'patch_openai_cost_guard.py',
     'patch_openai_responses_cost_guard.py',
     'patch_unified_voice_agent_flow.py',
+    'patch_unit_test_compat.py',
 ):
     patch = Path('..') / patch_name
     if not patch.exists():
