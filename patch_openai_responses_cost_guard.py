@@ -10,17 +10,8 @@ def replace_once(path: Path, old: str, new: str):
     path.write_text(text.replace(old, new, 1), encoding='utf-8')
 
 
-factory = root / 'app/src/main/kotlin/ai/closepaw/llm/LLMClientFactory.kt'
-replace_once(
-    factory,
-    'OpenAIResponseClient(store.requireApiKey(LLMProvider.OPENAI_API), baseUrl)',
-    '''OpenAIResponseClient(
-                                store.requireApiKey(LLMProvider.OPENAI_API),
-                                baseUrl,
-                                maxEstimatedInputTokens = OPENAI_DIRECT_MAX_ESTIMATED_INPUT_TOKENS,
-                            )''',
-)
-
+# LLMClientFactory constructor wiring is applied by patch_openai_cost_guard.py. This patch only
+# protects the Responses transport itself, avoiding a duplicate/fragile factory rewrite.
 responses = root / 'app/src/main/kotlin/ai/closepaw/llm/OpenAIResponseClient.kt'
 replace_once(
     responses,
