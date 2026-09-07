@@ -37,9 +37,6 @@ new = '''            val catalog = ModelCatalogRepositoryHolder.get(context).cat
                     }
                 }
                 LLMProvider.OPENAI_API -> {
-                    // If a matching OAuth model is connected, HandsFreeIntentGate uses it first and
-                    // falls back to this API model only on a true usage/rate limit. If OAuth is not
-                    // connected, an explicitly selected API model remains a valid direct route.
                     val apiReady = runCatching { auth.has(LLMProvider.OPENAI_API) }.getOrDefault(false)
                     if (!oauthReady && !apiReady) {
                         return "OpenAI API key is required for the hands-free intent gate"
@@ -55,9 +52,13 @@ if old not in text:
 service.write_text(text.replace(old, new, 1), encoding='utf-8')
 print('Hands-free OAuth-primary preflight route applied')
 
-# Apply process-wide billing safety patches from the checkout root. The workflow copies this script
-# into the pinned ClosePaw checkout, while the patch repository remains its parent directory.
-for patch_name in ('patch_openai_cost_guard.py', 'patch_openai_responses_cost_guard.py'):
+# Apply billing safety, then the final architecture-normalization patch. The final patch deliberately
+# keeps the Jarvis intent gate but removes any coupling between its model route and agent execution.
+for patch_name in (
+    'patch_openai_cost_guard.py',
+    'patch_openai_responses_cost_guard.py',
+    'patch_unified_voice_agent_flow.py',
+):
     patch = Path('..') / patch_name
     if not patch.exists():
         raise SystemExit(f'{patch_name} missing from patch checkout')
