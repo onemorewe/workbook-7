@@ -10,50 +10,10 @@ def replace_once(path: Path, old: str, new: str):
     path.write_text(text.replace(old, new, 1), encoding='utf-8')
 
 
-# 1) New ordinary sessions prefer a matching ChatGPT/Codex OAuth model. Keep this routing decision
-# at session creation rather than in LLMClientFactory: hands-free intentionally selects an API mirror
-# after a real OAuth usage/rate limit, and the factory must not silently route that fallback back to
-# OAuth. Reloaded legacy API sessions are protected by the hard API fuse below.
-main = root / 'app/src/main/kotlin/ai/closepaw/app/MainActivity.kt'
-replace_once(
-    main,
-    '''                        mainModel = settingsState.selectedModel,
-''',
-    '''                        mainModel = resolveCostSafeMainModel(),
-''',
-)
-replace_once(
-    main,
-    '''    private suspend fun createFreshSession(
-''',
-    '''    private fun resolveCostSafeMainModel(): String {
-        val selected = settingsState.selectedModel
-        if (settingsState.llmBackend != LLMBackendType.CLOUD) return selected
-        val entry = runCatching { modelCatalog.resolve(selected) }.getOrNull() ?: return selected
-        if (entry.provider != LLMProvider.OPENAI_API) return selected
-        val oauthReady = runCatching { authStore.has(LLMProvider.OPENAI_CODEX) }.getOrDefault(false)
-        if (!oauthReady) return selected
-        val oauthMirror = modelCatalog.modelsFor(LLMProvider.OPENAI_CODEX)
-            .firstOrNull { it.modelId == entry.modelId }
-            ?: return selected
-        ai.closepaw.ui.capsule.voice.HandsFreeDebugRelay.publish(
-            stage = "llm-route",
-            message = "Ordinary session routed to ChatGPT OAuth instead of paid API mirror",
-            metadata = mapOf(
-                "configured_model" to selected,
-                "effective_model" to oauthMirror.name,
-                "model_id" to entry.modelId,
-            ),
-        )
-        return oauthMirror.name
-    }
-
-    private suspend fun createFreshSession(
-''',
-)
-
-# 2) Every direct OpenAI API client gets a hard pre-network request-size fuse. This also protects
-# resumed old sessions and intentional hands-free API fallback.
+# Agent provider/model selection is explicit user configuration. Do NOT silently reroute an
+# OPENAI_API selection to ChatGPT OAuth here. The UI warns before selecting paid API; this patch is
+# only the emergency pre-network fuse that prevents a runaway GUI-agent prompt from spending
+# dollars in a single request. It also protects resumed old sessions and hands-free execution.
 factory = root / 'app/src/main/kotlin/ai/closepaw/llm/LLMClientFactory.kt'
 replace_once(
     factory,
@@ -77,7 +37,6 @@ replace_once(
 ''',
 )
 
-# 3) Hard pre-network fuse for direct OpenAI Chat Completions calls.
 chat = root / 'app/src/main/kotlin/ai/closepaw/llm/ChatCompletionClient.kt'
 replace_once(
     chat,
@@ -96,11 +55,7 @@ replace_once(
 ''',
     '''internal const val OPENAI_DIRECT_MAX_ESTIMATED_INPUT_TOKENS = 32_000L
 
-/**
- * Conservative request-size estimate used only as a billing fuse. It intentionally overestimates
- * ordinary UTF-8 English text (~3 chars/token rather than ~4) and includes SDK object renderings so
- * tool schemas, function output and multimodal data URLs contribute to the guard.
- */
+/** Conservative request-size estimate used only as a billing fuse. */
 internal fun estimateOpenAiRequestInputTokens(
     systemPrompt: String,
     inputItems: List<ResponseInputItem>,
@@ -200,7 +155,7 @@ replace_once(
             )
             throw IllegalStateException(
                 "OpenAI API cost guard blocked ~$estimated input tokens (limit $limit). " +
-                    "Use ChatGPT OAuth or start/compact the session before paid API fallback."
+                    "Start/compact the session or choose a subscription model."
             )
         }
     }
@@ -209,7 +164,6 @@ replace_once(
 ''',
 )
 
-# 4) Pure JVM regression tests for the fuse — no emulator, audio, or network.
 test_dir = root / 'app/src/test/kotlin/ai/closepaw/llm'
 test_dir.mkdir(parents=True, exist_ok=True)
 (test_dir / 'OpenAiApiCostGuardTest.kt').write_text(r'''package ai.closepaw.llm
@@ -240,4 +194,4 @@ class OpenAiApiCostGuardTest {
 }
 ''', encoding='utf-8')
 
-print('Ordinary OAuth-first routing + direct OpenAI API cost fuse applied')
+print('Explicit agent routing + direct OpenAI API cost fuse applied')
