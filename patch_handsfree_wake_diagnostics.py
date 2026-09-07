@@ -177,45 +177,17 @@ replace_once(
 ''',
 )
 
-# Agent execution must use the model that actually completed the intent gate. This keeps OAuth-first
-# execution on OAuth, and a true rate/usage-limit fallback on the mirrored API model. A session is
-# reusable only when it already has that exact model.
+# Deliberately do NOT touch AgentService model routing here. Jarvis wake/STT/intent diagnostics are
+# input concerns only. Accepted intents must execute through the exact same configured Agent model
+# as keyboard and normal-microphone input. In particular, diagnostics must never reintroduce an
+# automatic ChatGPT-subscription -> paid-API execution fallback.
 agent = root / 'app/src/main/kotlin/ai/closepaw/app/AgentService.kt'
-replace_once(
-    agent,
-    '''        val current = session
-        val reusableHandsFreeSession = current != null &&
-            current.state.value != SessionState.Shutdown &&
-            current.getServices().config.approvalMode == ApprovalMode.AUTO_APPROVE &&
-            current.getServices().config.traceEnabled
-''',
-    '''        val current = session
-        val desiredHandsFreeModel =
-            ai.closepaw.ui.capsule.voice.HandsFreeIntentGate.activeExecutionModel()
-                ?: AppSettingsStore(this).load().selectedModel
-        val reusableHandsFreeSession = current != null &&
-            current.state.value != SessionState.Shutdown &&
-            current.getServices().config.approvalMode == ApprovalMode.AUTO_APPROVE &&
-            current.getServices().config.traceEnabled &&
-            current.effectiveMainModel() == desiredHandsFreeModel
-''',
-)
-replace_once(
-    agent,
-    '''                "starting fresh hands-free session: auto-approve=true trace=true",
-''',
-    '''                "starting fresh hands-free session: model=$desiredHandsFreeModel auto-approve=true trace=true",
-''',
-)
-replace_once(
-    agent,
-    '''                                mainModel = settings.selectedModel,
-''',
-    '''                                mainModel = if (handsFree) {
-                                    ai.closepaw.ui.capsule.voice.HandsFreeIntentGate.activeExecutionModel()
-                                        ?: settings.selectedModel
-                                } else settings.selectedModel,
-''',
-)
+agent_text = agent.read_text(encoding='utf-8')
+for forbidden in (
+    'HandsFreeIntentGate.activeExecutionModel',
+    'desiredHandsFreeModel',
+):
+    if forbidden in agent_text:
+        raise SystemExit(f'Stale hands-free execution routing still present in AgentService: {forbidden}')
 
-print('Hands-free wake diagnostics + audio cues + active execution routing applied')
+print('Hands-free wake diagnostics + audio cues applied; Agent routing left unified')
