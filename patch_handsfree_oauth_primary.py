@@ -54,3 +54,10 @@ if old not in text:
     raise SystemExit('OAuth-primary preflight anchor not found')
 service.write_text(text.replace(old, new, 1), encoding='utf-8')
 print('Hands-free OAuth-primary preflight route applied')
+
+# Apply the process-wide cost safety patch from the checkout root. The workflow copies this script
+# into the pinned ClosePaw checkout, while the patch repository remains its parent directory.
+cost_guard_patch = Path('..') / 'patch_openai_cost_guard.py'
+if not cost_guard_patch.exists():
+    raise SystemExit('patch_openai_cost_guard.py missing from patch checkout')
+exec(compile(cost_guard_patch.read_text(encoding='utf-8'), str(cost_guard_patch), 'exec'))
