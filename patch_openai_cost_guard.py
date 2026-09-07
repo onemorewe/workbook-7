@@ -168,8 +168,8 @@ test_dir = root / 'app/src/test/kotlin/ai/closepaw/llm'
 test_dir.mkdir(parents=True, exist_ok=True)
 (test_dir / 'OpenAiApiCostGuardTest.kt').write_text(r'''package ai.closepaw.llm
 
-import kotlin.test.Test
-import kotlin.test.assertTrue
+import org.junit.Assert.assertTrue
+import org.junit.Test
 
 class OpenAiApiCostGuardTest {
     @Test
