@@ -10,63 +10,74 @@ def replace_once(path: Path, old: str, new: str):
     path.write_text(text.replace(old, new, 1), encoding='utf-8')
 
 
-# 1) Global OpenAI routing safety: if the user is signed into ChatGPT and the selected
-# OPENAI_API entry has an identical Codex/OAuth modelId, use the subscription route.
-# This also protects reloaded sessions whose stored config still points at OPENAI_API.
-factory = root / 'app/src/main/kotlin/ai/closepaw/llm/LLMClientFactory.kt'
+# 1) New ordinary sessions prefer a matching ChatGPT/Codex OAuth model. Keep this routing decision
+# at session creation rather than in LLMClientFactory: hands-free intentionally selects an API mirror
+# after a real OAuth usage/rate limit, and the factory must not silently route that fallback back to
+# OAuth. Reloaded legacy API sessions are protected by the hard API fuse below.
+main = root / 'app/src/main/kotlin/ai/closepaw/app/MainActivity.kt'
 replace_once(
-    factory,
-    '''            val currentGen = if (store != null && provider != LLMProvider.LOCAL_LFM) {
-                store.generation(provider)
-            } else 0L
+    main,
+    '''                        mainModel = settingsState.selectedModel,
 ''',
-    '''            val currentGen = if (store != null && provider != LLMProvider.LOCAL_LFM) {
-                val providerGen = store.generation(provider)
-                // OPENAI_API entries may be transparently routed through matching ChatGPT OAuth.
-                // Include the OAuth generation so sign-in/sign-out invalidates this cache entry.
-                if (provider == LLMProvider.OPENAI_API) {
-                    providerGen * 31L + store.generation(LLMProvider.OPENAI_CODEX)
-                } else providerGen
-            } else 0L
+    '''                        mainModel = resolveCostSafeMainModel(),
 ''',
 )
 replace_once(
-    factory,
-    '''            LLMProvider.OPENAI_API ->
-                    when (entry.api) {
-                        ApiType.RESPONSE ->
-                                OpenAIResponseClient(store.requireApiKey(LLMProvider.OPENAI_API), baseUrl)
-                        ApiType.CHAT ->
-                                ChatCompletionClient(store.requireApiKey(LLMProvider.OPENAI_API), baseUrl)
-                    }
+    main,
+    '''    private suspend fun createFreshSession(
 ''',
-    '''            LLMProvider.OPENAI_API -> {
-                val oauthMirror = catalog.modelsFor(LLMProvider.OPENAI_CODEX)
-                    .firstOrNull { it.modelId == entry.modelId }
-                val explicitApiBaseOverride = baseUrlOverrides.containsKey(LLMProvider.OPENAI_API)
-                if (!explicitApiBaseOverride && oauthMirror != null && store.has(LLMProvider.OPENAI_CODEX)) {
-                    // Subscription first. A selected API mirror must not silently burn API credit
-                    // while the same model is already available through the user's ChatGPT login.
-                    CodexResponseClient(
-                        headerSupplier = { store.codexHeaders(LLMProvider.OPENAI_CODEX) }
-                    )
-                } else {
-                    when (entry.api) {
-                        ApiType.RESPONSE ->
-                            OpenAIResponseClient(store.requireApiKey(LLMProvider.OPENAI_API), baseUrl)
-                        ApiType.CHAT ->
-                            ChatCompletionClient(
-                                store.requireApiKey(LLMProvider.OPENAI_API),
-                                baseUrl,
-                                maxEstimatedInputTokens = OPENAI_DIRECT_MAX_ESTIMATED_INPUT_TOKENS,
-                            )
-                    }
-                }
-            }
+    '''    private fun resolveCostSafeMainModel(): String {
+        val selected = settingsState.selectedModel
+        if (settingsState.llmBackend != LLMBackendType.CLOUD) return selected
+        val entry = runCatching { modelCatalog.resolve(selected) }.getOrNull() ?: return selected
+        if (entry.provider != LLMProvider.OPENAI_API) return selected
+        val oauthReady = runCatching { authStore.has(LLMProvider.OPENAI_CODEX) }.getOrDefault(false)
+        if (!oauthReady) return selected
+        val oauthMirror = modelCatalog.modelsFor(LLMProvider.OPENAI_CODEX)
+            .firstOrNull { it.modelId == entry.modelId }
+            ?: return selected
+        ai.closepaw.ui.capsule.voice.HandsFreeDebugRelay.publish(
+            stage = "llm-route",
+            message = "Ordinary session routed to ChatGPT OAuth instead of paid API mirror",
+            metadata = mapOf(
+                "configured_model" to selected,
+                "effective_model" to oauthMirror.name,
+                "model_id" to entry.modelId,
+            ),
+        )
+        return oauthMirror.name
+    }
+
+    private suspend fun createFreshSession(
 ''',
 )
 
-# 2) Hard pre-network fuse for direct OpenAI Chat Completions calls.
+# 2) Every direct OpenAI API client gets a hard pre-network request-size fuse. This also protects
+# resumed old sessions and intentional hands-free API fallback.
+factory = root / 'app/src/main/kotlin/ai/closepaw/llm/LLMClientFactory.kt'
+replace_once(
+    factory,
+    '''                        ApiType.RESPONSE ->
+                                OpenAIResponseClient(store.requireApiKey(LLMProvider.OPENAI_API), baseUrl)
+                        ApiType.CHAT ->
+                                ChatCompletionClient(store.requireApiKey(LLMProvider.OPENAI_API), baseUrl)
+''',
+    '''                        ApiType.RESPONSE ->
+                                OpenAIResponseClient(
+                                    store.requireApiKey(LLMProvider.OPENAI_API),
+                                    baseUrl,
+                                    maxEstimatedInputTokens = OPENAI_DIRECT_MAX_ESTIMATED_INPUT_TOKENS,
+                                )
+                        ApiType.CHAT ->
+                                ChatCompletionClient(
+                                    store.requireApiKey(LLMProvider.OPENAI_API),
+                                    baseUrl,
+                                    maxEstimatedInputTokens = OPENAI_DIRECT_MAX_ESTIMATED_INPUT_TOKENS,
+                                )
+''',
+)
+
+# 3) Hard pre-network fuse for direct OpenAI Chat Completions calls.
 chat = root / 'app/src/main/kotlin/ai/closepaw/llm/ChatCompletionClient.kt'
 replace_once(
     chat,
@@ -168,6 +179,7 @@ replace_once(
             message = "OpenAI API request preflight model=$model estimated_input=$estimated limit=$limit",
             metadata = mapOf(
                 "provider" to "OPENAI_API",
+                "api" to "chat_completions",
                 "model" to model,
                 "estimated_input_tokens" to estimated,
                 "limit_tokens" to limit,
@@ -197,7 +209,7 @@ replace_once(
 ''',
 )
 
-# 3) Pure JVM regression tests for the fuse — no emulator, audio, or network.
+# 4) Pure JVM regression tests for the fuse — no emulator, audio, or network.
 test_dir = root / 'app/src/test/kotlin/ai/closepaw/llm'
 test_dir.mkdir(parents=True, exist_ok=True)
 (test_dir / 'OpenAiApiCostGuardTest.kt').write_text(r'''package ai.closepaw.llm
@@ -228,4 +240,4 @@ class OpenAiApiCostGuardTest {
 }
 ''', encoding='utf-8')
 
-print('Global OAuth-first OpenAI routing + direct API cost fuse applied')
+print('Ordinary OAuth-first routing + direct OpenAI API cost fuse applied')
