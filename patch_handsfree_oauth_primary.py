@@ -57,7 +57,7 @@ for patch_name in (
     'patch_openai_responses_cost_guard.py',
     'patch_unified_voice_agent_flow.py',
     'patch_unit_test_compat.py',
-    'patch_handsfree_run_visibility_v2.py',
+    'patch_handsfree_run_visibility_v3.py',
 ):
     patch = Path('..') / patch_name
     if not patch.exists():
