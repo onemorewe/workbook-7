@@ -205,7 +205,6 @@ p = p.replace(
     1,
 )
 
-# Replace the old provider-specific hands-free gate calculation with a truthful same-Agent route.
 old_gate_block = '''                val gateReady = when (agentProvider) {
                     LLMProvider.OPENAI_CODEX -> oauthConnected && openAiKeyConnected
                     LLMProvider.OPENAI_API -> openAiKeyConnected
@@ -325,14 +324,13 @@ replacement = '''            val selected = runCatching { AppSettingsStore(conte
 s = s[:start] + replacement + s[end:]
 service.write_text(s, encoding='utf-8')
 
-# Fast unit/contract tests only. No generated voice, emulator or live network.
 test_dir = root / 'app/src/test/kotlin/ai/closepaw/ui/capsule/voice'
 test_dir.mkdir(parents=True, exist_ok=True)
 (test_dir / 'UnifiedVoiceFlowContractTest.kt').write_text(r'''package ai.closepaw.ui.capsule.voice
 
-import kotlin.test.Test
-import kotlin.test.assertFalse
-import kotlin.test.assertTrue
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
 
 class UnifiedVoiceFlowContractTest {
     @Test
