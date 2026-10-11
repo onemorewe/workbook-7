@@ -57,16 +57,17 @@ while adb('shell', 'getprop', 'sys.boot_completed') != '1':
     time.sleep(1)
 adb('shell', 'input', 'keyevent', '82')
 assert permissions == adb('shell', 'settings', 'get', 'secure', 'enabled_accessibility_services'), 'Accessibility permission changed after reboot'
+deadline = time.monotonic() + 45
+while True:
+    state = adb('shell', 'dumpsys', 'accessibility')
+    (RESULTS/'reboot-accessibility.txt').write_text(state)
+    bound = re.search(r'(?:boundServices|Bound services):\s*\{(.*?)\}', state, re.S | re.I)
+    if bound and PACKAGE in bound.group(1):
+        break
+    assert time.monotonic() < deadline, 'Accessibility service did not bind automatically after reboot'
+    time.sleep(1)
 adb('shell', 'am', 'start', '-n', PACKAGE+'/.MainActivity')
 time.sleep(2)
 assert find_id('rules_input').get('text') == 'example.test/blocked', 'Saved rules were lost after reboot'
-for attempt in range(20):
-    adb('shell', 'input', 'keyevent', '3')
-    adb('shell', 'am', 'start', '-f', '0x14000000', '-n', PACKAGE+'/.MainActivity')
-    time.sleep(.7)
-    if find_id('service_status').get('text') == 'Служба подключена':
-        break
-else:
-    raise AssertionError('Accessibility service did not reconnect after reboot without re-enabling it')
-(RESULTS/'reboot-check.txt').write_text('PASS: reboot retained custom rule and Accessibility permission; service reconnected without re-enabling before instrumentation\n')
+(RESULTS/'reboot-check.txt').write_text('PASS: reboot retained custom rule and Accessibility permission; system dumpsys confirmed automatic service binding before UI automation or instrumentation\n')
 adb('reverse', 'tcp:8765', 'tcp:8765')
