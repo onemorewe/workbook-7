@@ -22,7 +22,7 @@ public final class MainActivity extends Activity {
         LinearLayout box=new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(40,60,40,40);
         scroll.addView(box); setContentView(scroll);
         text(box,"NoShorts",30);
-        text(box,"Shorts в Chrome заблокированы постоянно, когда включена служба. Обычные видео доступны.",18);
+        text(box,"Shorts в Chrome заблокированы постоянно, когда включена служба. Карточки со ссылками на Shorts закрываются непрозрачной маской. Обычные видео доступны.",18);
         status=text(box,"",16);
         status.setId(R.id.service_status);
         button(box,"Включить службу",()->startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
@@ -42,7 +42,7 @@ public final class MainActivity extends Activity {
             } catch(IllegalArgumentException ex) { Toast.makeText(this,ex.getMessage(),Toast.LENGTH_LONG).show(); }
         });
         save.setId(R.id.save_rules);
-        text(box,"Без интернета, рекламы и истории посещений. Ограничение: Chrome должен отдавать текущий адрес через Accessibility. Полноэкранный режим, скрытый адрес и обновления Chrome требуют проверки на телефоне.",14);
+        text(box,"Без интернета, рекламы и истории посещений. Маски используют адреса ссылок, которые отдаёт Chrome. При загрузке и быстрой прокрутке превью могут мелькнуть до обновления маски. Карточки без доступной ссылки и изменения Chrome требуют проверки на телефоне.",14);
     }
     @Override public void onResume() {
         super.onResume();

@@ -7,6 +7,10 @@ import android.content.ComponentName;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.SystemClock;
+import android.graphics.Bitmap;
+import android.graphics.Color;
+import android.graphics.Rect;
+import android.view.accessibility.AccessibilityNodeInfo;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
 import androidx.test.uiautomator.*;
@@ -15,6 +19,8 @@ import org.junit.runner.RunWith;
 import org.junit.runners.MethodSorters;
 import java.io.File;
 import java.io.FileWriter;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.function.BooleanSupplier;
 import java.util.regex.Pattern;
 import java.util.regex.Matcher;
@@ -63,6 +69,45 @@ public class ChromeTest {
         Matcher m=Pattern.compile("NoShorts connected=(true|false) transitions=(\\d+) cover=(true|false)").matcher(serviceDump());
         if(!m.find()) return new ServiceState(false,-1,false);
         return new ServiceState(Boolean.parseBoolean(m.group(1)),Integer.parseInt(m.group(2)),Boolean.parseBoolean(m.group(3)));
+    }
+    private int maskCount() {
+        Matcher m=Pattern.compile("masks=(\\d+)").matcher(serviceDump());
+        return m.find()?Integer.parseInt(m.group(1)):-1;
+    }
+    private void assertPainted(Rect r,int expected,String label) {
+        Bitmap shot=InstrumentationRegistry.getInstrumentation().getUiAutomation().takeScreenshot();
+        assertNotNull("Screenshot unavailable",shot);
+        try {
+            int x=Math.min(shot.getWidth()-1,Math.max(0,r.centerX()));
+            int y=Math.min(shot.getHeight()-1,Math.max(0,r.centerY()));
+            assertEquals(label+" pixel at "+x+","+y,expected,shot.getPixel(x,y));
+        } finally { shot.recycle(); }
+    }
+    private List<Rect> liveShortsCards() {
+        List<Rect> result=new ArrayList<>();
+        AccessibilityNodeInfo root=InstrumentationRegistry.getInstrumentation().getUiAutomation().getRootInActiveWindow();
+        try { collectCards(root,result,0); }
+        finally { if(root!=null) root.recycle(); }
+        return result;
+    }
+    private void collectCards(AccessibilityNodeInfo node,List<Rect> result,int depth) {
+        if(node==null || depth>60) return;
+        CharSequence url=node.getExtras().getCharSequence("AccessibilityNodeInfo.targetUrl");
+        if(url!=null) {
+            Uri target=Uri.parse(url.toString());
+            String host=target.getHost(),path=target.getPath();
+            if(host!=null && (host.equals("youtube.com") || host.endsWith(".youtube.com")) &&
+                path!=null && path.startsWith("/shorts/")) {
+                Rect r=new Rect(); node.getBoundsInScreen(r);
+                if(r.width()>device.getDisplayWidth()/5 && r.height()>device.getDisplayHeight()/12 &&
+                    r.top>=0 && r.bottom<=device.getDisplayHeight()) result.add(r);
+            }
+        }
+        for(int i=0;i<node.getChildCount();i++) {
+            AccessibilityNodeInfo child=node.getChild(i);
+            try { collectCards(child,result,depth+1); }
+            finally { if(child!=null) child.recycle(); }
+        }
     }
     private UiObject2 blockerControl(String id) {
         for(int attempt=0;attempt<10;attempt++) {
@@ -187,5 +232,68 @@ public class ChromeTest {
             await(()->!state().cover,3000,"Cover remained outside Chrome");
             home();
         }
+    }
+    @Test public void test07PreviewMasksTrackScrollAndDynamicCards() {
+        home(); int before=state().transitions;
+        open("http://127.0.0.1:8765/previews");
+        UiObject2 card=device.wait(Until.findObject(By.desc("Shorts preview one")),20000);
+        assertNotNull("Preview fixture unavailable",card);
+        await(()->maskCount()>0,7000,"Shorts link had no preview mask");
+        SystemClock.sleep(350);
+        assertPainted(card.getVisibleBounds(),Color.rgb(18,22,30),"First thumbnail was not opaque");
+        UiObject2 ordinary=device.findObject(By.text("Ordinary video with Shorts in its title"));
+        assertNotNull("Ordinary fixture card unavailable",ordinary);
+        assertPainted(ordinary.getVisibleBounds(),Color.GREEN,"Ordinary video was incorrectly hidden");
+        UiObject2 second=null;
+        for(int i=0;i<6 && second==null;i++) {
+            device.swipe(device.getDisplayWidth()*4/5,device.getDisplayHeight()*3/4,
+                device.getDisplayWidth()*4/5,device.getDisplayHeight()/3,30);
+            SystemClock.sleep(600);
+            second=device.findObject(By.desc("Shorts preview two"));
+        }
+        assertNotNull("Second thumbnail unavailable after scrolling",second);
+        SystemClock.sleep(500);
+        assertPainted(second.getVisibleBounds(),Color.rgb(18,22,30),"Mask did not follow scroll");
+        UiObject2 dynamic=device.findObject(By.text("Add dynamic card"));
+        for(int i=0;i<4 && dynamic==null;i++) {
+            device.swipe(device.getDisplayWidth()*4/5,device.getDisplayHeight()*3/4,
+                device.getDisplayWidth()*4/5,device.getDisplayHeight()/2,20);
+            SystemClock.sleep(400); dynamic=device.findObject(By.text("Add dynamic card"));
+        }
+        assertNotNull("Dynamic fixture button unavailable",dynamic); dynamic.click();
+        UiObject2 added=device.wait(Until.findObject(By.text("Dynamic Shorts preview")),5000);
+        if(added==null) {
+            device.swipe(device.getDisplayWidth()*4/5,device.getDisplayHeight()*3/4,
+                device.getDisplayWidth()*4/5,device.getDisplayHeight()/2,20);
+            added=device.wait(Until.findObject(By.text("Dynamic Shorts preview")),5000);
+        }
+        assertNotNull("Dynamic card was not inserted",added);
+        SystemClock.sleep(700);
+        assertPainted(added.getVisibleBounds(),Color.rgb(18,22,30),"Dynamic thumbnail was exposed");
+        assertEquals("Preview masking navigated or blocked the safe page",before,state().transitions);
+        device.pressHome();
+        await(()->maskCount()==0,3000,"Preview masks leaked outside Chrome");
+        open("http://127.0.0.1:8765/safe");
+        assertNotNull(device.wait(Until.findObject(By.text("Allowed page")),10000));
+        await(()->maskCount()==0,3000,"Preview masks remained on an ordinary page");
+    }
+    @Test public void test08LiveYouTubePreviewIsOpaque() throws Exception {
+        home(); int before=state().transitions;
+        open("https://m.youtube.com/results?search_query=cat+shorts");
+        List<Rect> cards=new ArrayList<>();
+        for(int attempt=0;attempt<8 && cards.isEmpty();attempt++) {
+            SystemClock.sleep(attempt==0?7000:1500);
+            cards=liveShortsCards();
+            if(cards.isEmpty()) device.swipe(device.getDisplayWidth()*4/5,device.getDisplayHeight()*3/4,
+                device.getDisplayWidth()*4/5,device.getDisplayHeight()/3,25);
+        }
+        assertFalse("Live YouTube supplied no actual Shorts thumbnail link; cannot verify",cards.isEmpty());
+        await(()->maskCount()>0,7000,"Live YouTube thumbnail was not masked");
+        SystemClock.sleep(500);
+        cards=liveShortsCards();
+        assertFalse("Live Shorts thumbnail moved offscreen before verification",cards.isEmpty());
+        for(Rect r:cards) assertPainted(r,Color.rgb(18,22,30),"Live YouTube thumbnail remained visible");
+        assertEquals("Search results were blocked instead of masking cards",before,state().transitions);
+        assertFalse("Live results had a full page cover",state().cover);
     }
 }

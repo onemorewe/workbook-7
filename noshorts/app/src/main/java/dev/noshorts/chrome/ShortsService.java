@@ -24,7 +24,7 @@ import dev.noshorts.core.Guard;
 import dev.noshorts.core.UrlRules;
 import dev.noshorts.core.ChromeAddress;
 
-/** Reads only Chrome's address bar. Page titles, links and labels are never used as evidence. */
+/** Blocks navigation by native address; hides previews by Chrome's exact link destinations. */
 public final class ShortsService extends AccessibilityService implements SharedPreferences.OnSharedPreferenceChangeListener {
     public static volatile boolean connected;
     public static volatile int blockedTransitions;
@@ -37,10 +37,12 @@ public final class ShortsService extends AccessibilityService implements SharedP
     private boolean queued;
     private long lastBack;
     private SharedPreferences preferences;
+    private PreviewMasks previews;
     private final Runnable poll=()->{queued=false; scan();};
 
     @Override public void onServiceConnected() {
         connected=true;
+        previews=new PreviewMasks(this);
         preferences=getSharedPreferences("rules",MODE_PRIVATE);
         preferences.registerOnSharedPreferenceChangeListener(this);
         loadRules(); queue(0);
@@ -54,6 +56,7 @@ public final class ShortsService extends AccessibilityService implements SharedP
         if(event!=null && CHROME.contentEquals(event.getPackageName()==null ? "" : event.getPackageName())) queue(0);
     }
     private void queue(long delay) {
+        if(queued && delay==0) { handler.removeCallbacks(poll); queued=false; }
         if(!queued) { queued=true; handler.postDelayed(poll,delay); }
     }
     private AccessibilityNodeInfo chromeRoot() {
@@ -75,19 +78,23 @@ public final class ShortsService extends AccessibilityService implements SharedP
         AccessibilityNodeInfo root=null;
         try {
             root=chromeRoot();
-            if(root==null) { removeCover(); return; }
+            if(root==null) { removeCover(); previews.clear(); return; }
             UrlRules.Verdict verdict=addressVerdict(root);
             boolean wasBlocked=guard.isBlocked();
             boolean blocked=guard.observe(verdict);
             if(blocked && !wasBlocked) blockedTransitions++;
             if(blocked) {
+                previews.clear();
                 showCover();
                 // One Back request on entry, no cooldown that turns detection off.
                 // If Back does not navigate, the cover remains and the user can open safe home.
                 long now=SystemClock.elapsedRealtime();
                 if(!wasBlocked && now-lastBack>1000) { lastBack=now; performGlobalAction(GLOBAL_ACTION_BACK); }
-            } else removeCover();
-            queue(250);
+            } else {
+                removeCover();
+                previews.update(root);
+            }
+            queue(previews.count()>0?120:250);
         } catch(RuntimeException ex) {
             // Tree/window can disappear mid-read; preserve the guard decision and retry.
             queue(250);
@@ -136,13 +143,15 @@ public final class ShortsService extends AccessibilityService implements SharedP
         cover=null;
         coverVisible=false;
     }
-    @Override public void onInterrupt() { removeCover(); }
+    @Override public void onInterrupt() { removeCover(); if(previews!=null) previews.clear(); }
     @Override protected void dump(FileDescriptor fd, PrintWriter writer, String[] args) {
         // System shell diagnostics only; no URL, page text or browsing history is exposed.
-        writer.println("NoShorts connected="+connected+" transitions="+blockedTransitions+" cover="+coverVisible);
+        writer.println("NoShorts connected="+connected+" transitions="+blockedTransitions+" cover="+coverVisible+
+            " masks="+(previews==null?0:previews.count()));
     }
     @Override public void onDestroy() {
         connected=false; handler.removeCallbacksAndMessages(null); queued=false; removeCover();
+        if(previews!=null) previews.clear();
         if(preferences!=null) preferences.unregisterOnSharedPreferenceChangeListener(this);
         super.onDestroy();
     }
