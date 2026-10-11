@@ -74,12 +74,6 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot-save -memory 4096
           script: cd noshorts && bash ci/run_emulator.sh
-      - name: Collect emulator evidence
-        if: always()
-        run: |
-          mkdir -p ci-results
-          timeout 15s adb logcat -d > ci-results/logcat.txt 2>/dev/null || true
-          timeout 15s adb pull /sdcard/Android/data/dev.noshorts.chrome/files/ci-evidence ci-results/device-evidence 2>/dev/null || true
       - name: Upload verification results
         if: always()
         uses: actions/upload-artifact@v4

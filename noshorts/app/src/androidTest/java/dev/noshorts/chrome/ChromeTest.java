@@ -13,6 +13,7 @@ import org.junit.*;
 import org.junit.runner.RunWith;
 import org.junit.runners.MethodSorters;
 import java.io.File;
+import java.io.FileWriter;
 import java.util.function.BooleanSupplier;
 import java.util.regex.Pattern;
 import static org.junit.Assert.*;
@@ -28,8 +29,8 @@ public class ChromeTest {
         Instrumentation instrumentation=InstrumentationRegistry.getInstrumentation();
         device=UiDevice.getInstance(instrumentation);
         app=instrumentation.getTargetContext();
-        device.executeShellCommand("settings put secure enabled_accessibility_services dev.noshorts.chrome/dev.noshorts.chrome.ShortsService");
-        device.executeShellCommand("settings put secure accessibility_enabled 1");
+        assertTrue("Previously enabled Accessibility permission was lost",
+            device.executeShellCommand("settings get secure enabled_accessibility_services").contains("dev.noshorts.chrome"));
         await(()->ShortsService.connected,15000,"Accessibility service did not connect");
         app.getSharedPreferences("rules",Context.MODE_PRIVATE).edit().putString("extra","").commit();
     }
@@ -110,5 +111,37 @@ public class ChromeTest {
         int before=ShortsService.blockedTransitions;
         action.click();
         blockedOutcome(before,"Chrome pushState navigation was not blocked by exact URL rules");
+    }
+    @Test public void test05NavigationAfterToolbarScroll() throws Exception {
+        home();
+        app.getSharedPreferences("rules",Context.MODE_PRIVATE).edit().putString("extra","127.0.0.1/shorts").commit();
+        open("http://127.0.0.1:8765/safe?scroll=1");
+        assertNotNull("Scroll fixture unavailable",device.wait(Until.findObject(By.text("Open Shorts route")),20000));
+        device.swipe(device.getDisplayWidth()/2,device.getDisplayHeight()*3/4,
+            device.getDisplayWidth()/2,device.getDisplayHeight()/4,20);
+        SystemClock.sleep(1500);
+        File dir=new File(app.getExternalFilesDir(null),"ci-evidence"); dir.mkdirs();
+        device.dumpWindowHierarchy(new File(dir,"before-scroll-navigation.xml"));
+        device.takeScreenshot(new File(dir,"before-scroll-navigation.png"));
+        UiObject2 bar=device.findObject(By.res("com.android.chrome","url_bar"));
+        try(FileWriter writer=new FileWriter(new File(dir,"scroll-address-state.txt"))) {
+            writer.write("Address bar present after scroll: "+(bar!=null)+"\n");
+        }
+        UiObject2 action=device.findObject(By.text("Open Shorts route"));
+        assertNotNull("Fixed navigation button unavailable after scroll",action);
+        int before=ShortsService.blockedTransitions;
+        action.click();
+        blockedOutcome(before,"Navigation after toolbar scroll was not blocked");
+    }
+    @Test public void test06RepeatedShortsAndReturnFromHome() {
+        home();
+        for(int attempt=0;attempt<3;attempt++) {
+            int before=ShortsService.blockedTransitions;
+            open("https://m.youtube.com/shorts/wmzbgQAqjvI");
+            blockedOutcome(before,"Repeated Shorts entry was not blocked: "+attempt);
+            device.pressHome();
+            await(()->!ShortsService.coverVisible,3000,"Cover remained outside Chrome");
+            home();
+        }
     }
 }

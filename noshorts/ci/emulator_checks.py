@@ -49,4 +49,16 @@ adb('shell', 'am', 'start', '-n', PACKAGE+'/.MainActivity')
 time.sleep(1)
 assert find_id('rules_input').get('text') == 'example.test/blocked', 'Saved rules were lost during update'
 (RESULTS/'update-check.txt').write_text('PASS: adb install -r; firstInstallTime, saved custom rule and Accessibility permission retained\n')
+adb('reboot')
+subprocess.run(['adb', 'wait-for-device'], check=True, timeout=120)
+deadline = time.monotonic() + 120
+while adb('shell', 'getprop', 'sys.boot_completed') != '1':
+    assert time.monotonic() < deadline, 'Emulator did not finish rebooting'
+    time.sleep(1)
+adb('shell', 'input', 'keyevent', '82')
+assert permissions == adb('shell', 'settings', 'get', 'secure', 'enabled_accessibility_services'), 'Accessibility permission changed after reboot'
+adb('shell', 'am', 'start', '-n', PACKAGE+'/.MainActivity')
+time.sleep(2)
+assert find_id('rules_input').get('text') == 'example.test/blocked', 'Saved rules were lost after reboot'
+(RESULTS/'reboot-check.txt').write_text('PASS: reboot retained custom rule and Accessibility permission; Chrome instrumentation checks automatic service reconnection\n')
 adb('reverse', 'tcp:8765', 'tcp:8765')
