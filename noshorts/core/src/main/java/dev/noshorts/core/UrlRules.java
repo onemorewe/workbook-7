@@ -30,9 +30,32 @@ public final class UrlRules {
         Address a = parse(displayedAddress);
         if (a == null) return Verdict.UNKNOWN;
         if (a.internal) return Verdict.ALLOW;
-        if (new Rule("youtube.com", "/shorts").matches(a)) return Verdict.BLOCK;
+        if (isShorts(displayedAddress) || feedSite(displayedAddress)!=null) return Verdict.BLOCK;
         for (Rule r : extra) if (r.matches(a)) return Verdict.BLOCK;
         return Verdict.ALLOW;
+    }
+
+    /** Only Shorts, independent of feed rules and user-defined blocked domains. */
+    public static boolean isShorts(String input) {
+        Address a=parse(input);
+        return a!=null && !a.internal && new Rule("youtube.com","/shorts").matches(a);
+    }
+    public static boolean isYouTube(String input) {
+        Address a=parse(input);
+        return a!=null && !a.internal && new Rule("youtube.com","/").matches(a);
+    }
+    /** Home is an exact path here; it must never mean the whole domain. */
+    public static String feedSite(String input) {
+        Address a=parse(input);
+        if(a==null || a.internal) return null;
+        if(new Rule("youtube.com","/").matches(a) &&
+            (a.path.equals("/") || new Rule("youtube.com","/feed").matches(a))) return "YouTube";
+        if(new Rule("instagram.com","/").matches(a) && (a.path.equals("/") ||
+            new Rule("instagram.com","/feed").matches(a) || new Rule("instagram.com","/explore").matches(a) ||
+            new Rule("instagram.com","/reel").matches(a) || new Rule("instagram.com","/reels").matches(a))) return "Instagram";
+        if(new Rule("linkedin.com","/").matches(a) &&
+            (a.path.equals("/") || new Rule("linkedin.com","/feed").matches(a))) return "LinkedIn";
+        return null;
     }
 
     private static Address parse(String input) {

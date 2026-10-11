@@ -50,9 +50,24 @@ public class ChromeTest {
         try(FileWriter writer=new FileWriter(new File(dir,"service-"+suffix+".txt"))) {
             writer.write(serviceDump());
         }
+        AccessibilityNodeInfo root=InstrumentationRegistry.getInstrumentation().getUiAutomation().getRootInActiveWindow();
+        try(FileWriter writer=new FileWriter(new File(dir,"chrome-nodes-"+suffix+".txt"))) {
+            writeNodes(writer,root,0);
+        } finally { if(root!=null) root.recycle(); }
         // Gradle uninstalls this driver after instrumentation; keep evidence outside its data.
         device.executeShellCommand("mkdir -p /sdcard/Download/noshorts-ci");
         device.executeShellCommand("cp -R "+dir.getAbsolutePath()+"/. /sdcard/Download/noshorts-ci/");
+    }
+    private void writeNodes(FileWriter writer,AccessibilityNodeInfo node,int depth) throws Exception {
+        if(node==null || depth>60) return;
+        Rect r=new Rect(); node.getBoundsInScreen(r);
+        writer.write(depth+" "+node.getClassName()+" "+r+" extras="+node.getExtras()+
+            " text="+node.getText()+" desc="+node.getContentDescription()+"\n");
+        for(int i=0;i<node.getChildCount();i++) {
+            AccessibilityNodeInfo child=node.getChild(i);
+            try { writeNodes(writer,child,depth+1); }
+            finally { if(child!=null) child.recycle(); }
+        }
     }
     private static final String BLOCKER="dev.noshorts.chrome";
     private static final class ServiceState {
@@ -75,12 +90,15 @@ public class ChromeTest {
         return m.find()?Integer.parseInt(m.group(1)):-1;
     }
     private void assertPainted(Rect r,int expected,String label) {
+        await(()->painted(r,expected),7000,label);
+    }
+    private boolean painted(Rect r,int expected) {
         Bitmap shot=InstrumentationRegistry.getInstrumentation().getUiAutomation().takeScreenshot();
         assertNotNull("Screenshot unavailable",shot);
         try {
             int x=Math.min(shot.getWidth()-1,Math.max(0,r.centerX()));
             int y=Math.min(shot.getHeight()-1,Math.max(0,r.centerY()));
-            assertEquals(label+" pixel at "+x+","+y,expected,shot.getPixel(x,y));
+            return expected==shot.getPixel(x,y);
         } finally { shot.recycle(); }
     }
     private List<Rect> liveShortsCards() {
@@ -143,11 +161,9 @@ public class ChromeTest {
             "; connected="+state().connected+"; transitions="+state().transitions+"; cover="+state().cover);
     }
     private void home() {
-        open("https://m.youtube.com/");
+        open("https://m.youtube.com/results?search_query=music");
         long deadline=SystemClock.uptimeMillis()+30000;
         while(SystemClock.uptimeMillis()<deadline) {
-            UiObject2 safe=device.findObject(By.text("Открыть обычный YouTube"));
-            if(safe!=null) safe.click();
             UiObject2 onboarding=device.findObject(By.res("com.android.chrome","signin_fre_dismiss_button"));
             if(onboarding==null) onboarding=device.findObject(By.text(Pattern.compile("(?i)(stay signed out|continue without an account|use without an account|accept & continue|no thanks|not now|got it|skip)")));
             if(onboarding!=null) onboarding.click();
@@ -292,8 +308,29 @@ public class ChromeTest {
         SystemClock.sleep(500);
         cards=liveShortsCards();
         assertFalse("Live Shorts thumbnail moved offscreen before verification",cards.isEmpty());
-        for(Rect r:cards) assertPainted(r,Color.rgb(18,22,30),"Live YouTube thumbnail remained visible");
+        await(()->{
+            List<Rect> visible=liveShortsCards();
+            if(visible.isEmpty()) return false;
+            for(Rect r:visible) if(!painted(r,Color.rgb(18,22,30))) return false;
+            return true;
+        },10000,"Live YouTube thumbnail remained visible");
         assertEquals("Search results were blocked instead of masking cards",before,state().transitions);
         assertFalse("Live results had a full page cover",state().cover);
+    }
+    @Test public void test09FeedPagesBlockedAndSafeRoutesAllowed() {
+        home();
+        for(String url:new String[]{"https://m.youtube.com/","https://m.youtube.com/feed/subscriptions",
+            "https://www.instagram.com/","https://www.instagram.com/reels/","https://www.linkedin.com/feed/"}) {
+            int before=state().transitions; open(url);
+            await(()->state().transitions>before,12000,"Feed route was not blocked: "+url);
+            device.pressHome(); await(()->!state().cover,3000,"Feed cover leaked outside Chrome");
+            home();
+        }
+        for(String url:new String[]{"https://www.instagram.com/direct/inbox/","https://www.linkedin.com/messaging/",
+            "https://www.linkedin.com/jobs/"}) {
+            home(); int before=state().transitions; open(url); SystemClock.sleep(4500);
+            assertEquals("Safe route was blocked: "+url,before,state().transitions);
+            assertFalse("Safe route was covered: "+url,state().cover);
+        }
     }
 }

@@ -15,7 +15,7 @@ PREVIEWS = b'''<!doctype html><meta name="viewport" content="width=device-width,
 <div class="spacer"></div>
 <section><a class="card" href="https://m.youtube.com/shorts/fixture-two"><img width="160" height="190" alt="Shorts preview two" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='190'%3E%3Crect width='160' height='190' fill='%23ff00ff'/%3E%3C/svg%3E">Shorts card two</a></section>
 <a class="safe" href="https://www.youtube.com/watch?v=ordinary">Ordinary video after scrolling</a>
-<button onclick="this.insertAdjacentHTML('afterend', '&lt;a class=card href=https://www.youtube.com/shorts/dynamic&gt;Dynamic Shorts preview&lt;/a&gt;')">Add dynamic card</button>'''
+<button onclick="document.getElementById('dynamic').innerHTML='&lt;a class=card href=https://www.youtube.com/shorts/dynamic&gt;Dynamic Shorts preview&lt;/a&gt;';document.getElementById('dynamic').scrollIntoView()">Add dynamic card</button><section id="dynamic"></section>'''
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):

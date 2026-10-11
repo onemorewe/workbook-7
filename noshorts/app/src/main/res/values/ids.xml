@@ -3,4 +3,6 @@
     <item name="rules_input" type="id" />
     <item name="save_rules" type="id" />
     <item name="blocked_cover" type="id" />
+    <item name="youtube_search" type="id" />
+    <item name="open_youtube_search" type="id" />
 </resources>

@@ -16,7 +16,6 @@ import dev.noshorts.core.UrlRules;
 final class PreviewMasks {
     static final int COLOR=Color.rgb(18,22,30);
     private static final String TARGET="AccessibilityNodeInfo.targetUrl";
-    private static final UrlRules SHORTS=new UrlRules("");
     private final Context context;
     private final WindowManager windows;
     private final List<View> views=new ArrayList<>();
@@ -28,10 +27,10 @@ final class PreviewMasks {
         windows=(WindowManager)context.getSystemService(Context.WINDOW_SERVICE);
     }
     int count() { return views.size(); }
-    void update(AccessibilityNodeInfo root) {
+    void update(AccessibilityNodeInfo root,boolean youtube) {
         remaining=1400;
         List<Rect> regions=new ArrayList<>();
-        findWebViews(root,regions,0);
+        findWebViews(root,regions,0,youtube);
         if(regions.equals(current)) return;
         // Reuse existing windows so a new scan does not uncover their old contents.
         for(int i=0;i<regions.size();i++) {
@@ -60,19 +59,19 @@ final class PreviewMasks {
         p.setTitle("NoShorts preview mask");
         return p;
     }
-    private void findWebViews(AccessibilityNodeInfo node,List<Rect> result,int depth) {
+    private void findWebViews(AccessibilityNodeInfo node,List<Rect> result,int depth,boolean youtube) {
         if(node==null || depth>60 || --remaining<0) return;
         if("android.webkit.WebView".contentEquals(node.getClassName()==null?"":node.getClassName())) {
             Rect viewport=new Rect(); node.getBoundsInScreen(viewport);
             if(!viewport.isEmpty()) {
-                Summary s=inspect(node,viewport,0);
+                Summary s=inspect(node,viewport,0,youtube);
                 for(Rect r:s.regions) addRegion(result,r);
             }
             return;
         }
         for(int i=0;i<node.getChildCount();i++) {
             AccessibilityNodeInfo child=node.getChild(i);
-            try { findWebViews(child,result,depth+1); }
+            try { findWebViews(child,result,depth+1,youtube); }
             finally { if(child!=null) child.recycle(); }
         }
     }
@@ -81,19 +80,25 @@ final class PreviewMasks {
         int distance=1000;
         final List<Rect> regions=new ArrayList<>();
     }
-    private Summary inspect(AccessibilityNodeInfo node,Rect viewport,int depth) {
+    private Summary inspect(AccessibilityNodeInfo node,Rect viewport,int depth,boolean youtube) {
         Summary s=new Summary();
         if(node==null || depth>60 || --remaining<0) { s.incomplete=true; return s; }
         CharSequence target=node.getExtras().getCharSequence(TARGET);
         if(target!=null && target.length()>0) {
-            s.shorts=SHORTS.evaluate(target.toString())==UrlRules.Verdict.BLOCK;
+            s.shorts=UrlRules.isShorts(target.toString());
             s.other=!s.shorts;
             if(s.shorts) s.distance=0;
         }
+        // YouTube also renders JavaScript navigation controls without href/targetUrl.
+        // Its accessibility label supplies an explicit action suffix, not a title keyword.
+        CharSequence description=node.getContentDescription();
+        boolean action=youtube && description!=null && description.toString().matches(
+            "(?s).+ - (play Short|воспроизвести Short|воспроизвести Shorts|смотреть Shorts)( New| Новинка)?$");
+        if(action) { s.shorts=true; s.distance=0; }
         for(int i=0;i<node.getChildCount();i++) {
             AccessibilityNodeInfo child=node.getChild(i);
             Summary c;
-            try { c=inspect(child,viewport,depth+1); }
+            try { c=inspect(child,viewport,depth+1,youtube); }
             finally { if(child!=null) child.recycle(); }
             s.shorts|=c.shorts; s.other|=c.other; s.incomplete|=c.incomplete;
             s.distance=Math.min(s.distance,c.distance+1);
@@ -102,9 +107,9 @@ final class PreviewMasks {
         Rect bounds=new Rect(); node.getBoundsInScreen(bounds);
         // Promote up to two containers around a link to include the whole thumbnail/card.
         // Never promote a partial traversal or a mixed shelf containing ordinary links.
-        boolean exact=s.shorts && target!=null && SHORTS.evaluate(target.toString())==UrlRules.Verdict.BLOCK;
+        boolean exact=action || (target!=null && UrlRules.isShorts(target.toString()));
         boolean card=s.shorts && !s.other && !s.incomplete && s.distance<=2 && depth>0 &&
-            bounds.height()<=viewport.height()*3/4 && bounds.width()<=viewport.width();
+            bounds.height()<=viewport.height()/2 && bounds.width()<=viewport.width();
         if((exact || card) && !bounds.isEmpty() && bounds.intersect(viewport)) {
             bounds.inset(-2,-2);
             bounds.intersect(viewport);

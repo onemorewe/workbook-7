@@ -38,6 +38,7 @@ public final class ShortsService extends AccessibilityService implements SharedP
     private long lastBack;
     private SharedPreferences preferences;
     private PreviewMasks previews;
+    private boolean youtubePage;
     private final Runnable poll=()->{queued=false; scan();};
 
     @Override public void onServiceConnected() {
@@ -78,7 +79,7 @@ public final class ShortsService extends AccessibilityService implements SharedP
         AccessibilityNodeInfo root=null;
         try {
             root=chromeRoot();
-            if(root==null) { removeCover(); previews.clear(); return; }
+            if(root==null) { removeCover(); previews.clear(); queue(250); return; }
             UrlRules.Verdict verdict=addressVerdict(root);
             boolean wasBlocked=guard.isBlocked();
             boolean blocked=guard.observe(verdict);
@@ -92,7 +93,7 @@ public final class ShortsService extends AccessibilityService implements SharedP
                 if(!wasBlocked && now-lastBack>1000) { lastBack=now; performGlobalAction(GLOBAL_ACTION_BACK); }
             } else {
                 removeCover();
-                previews.update(root);
+                previews.update(root,youtubePage);
             }
             queue(previews.count()>0?120:250);
         } catch(RuntimeException ex) {
@@ -108,22 +109,44 @@ public final class ShortsService extends AccessibilityService implements SharedP
                 if(n.isEditable() && n.isFocused()) continue;
                 CharSequence text=n.getText();
                 UrlRules.Verdict verdict=rules.evaluate(ChromeAddress.fromNodeText(text==null ? null : text.toString()));
-                if(verdict!=UrlRules.Verdict.UNKNOWN) return verdict;
+                if(verdict!=UrlRules.Verdict.UNKNOWN) {
+                    youtubePage=UrlRules.isYouTube(ChromeAddress.fromNodeText(text==null?null:text.toString()));
+                    return verdict;
+                }
+            }
+            return documentVerdict(root,0);
+        } finally { for(AccessibilityNodeInfo n:nodes) n.recycle(); }
+    }
+    private UrlRules.Verdict documentVerdict(AccessibilityNodeInfo node,int depth) {
+        if(node==null || depth>30) return UrlRules.Verdict.UNKNOWN;
+        // Only the document WebView's own URL; a link on the page is never navigation evidence.
+        if("android.webkit.WebView".contentEquals(node.getClassName()==null?"":node.getClassName())) {
+            for(String key:new String[]{"AccessibilityNodeInfo.targetUrl","url"}) {
+                CharSequence text=node.getExtras().getCharSequence(key);
+                UrlRules.Verdict v=rules.evaluate(text==null?null:text.toString());
+                if(v!=UrlRules.Verdict.UNKNOWN) { youtubePage=UrlRules.isYouTube(text.toString()); return v; }
             }
             return UrlRules.Verdict.UNKNOWN;
-        } finally { for(AccessibilityNodeInfo n:nodes) n.recycle(); }
+        }
+        for(int i=0;i<node.getChildCount();i++) {
+            AccessibilityNodeInfo child=node.getChild(i);
+            try {
+                UrlRules.Verdict v=documentVerdict(child,depth+1);
+                if(v!=UrlRules.Verdict.UNKNOWN) return v;
+            } finally { if(child!=null) child.recycle(); }
+        }
+        return UrlRules.Verdict.UNKNOWN;
     }
     private void showCover() {
         if(cover!=null) return;
         LinearLayout panel=new LinearLayout(this); panel.setId(R.id.blocked_cover); panel.setOrientation(LinearLayout.VERTICAL); panel.setGravity(Gravity.CENTER);
         panel.setPadding(40,40,40,40); panel.setBackgroundColor(Color.rgb(18,22,30));
         TextView title=new TextView(this); title.setText("Этот раздел заблокирован"); title.setTextColor(Color.WHITE); title.setTextSize(26); panel.addView(title);
-        TextView details=new TextView(this); details.setText("NoShorts · без временного обхода\nМожно вернуться к обычному YouTube"); details.setTextColor(Color.LTGRAY); details.setTextSize(16); details.setPadding(0,25,0,25); panel.addView(details);
-        Button safe=new Button(this); safe.setText("Открыть обычный YouTube"); safe.setAllCaps(false);
+        TextView details=new TextView(this); details.setText("Ленты и короткие ролики закрыты.\nПоиск, обычные видео, сообщения и вакансии доступны."); details.setTextColor(Color.LTGRAY); details.setTextSize(16); details.setPadding(0,25,0,25); panel.addView(details);
+        Button safe=new Button(this); safe.setText("Поиск и сообщения"); safe.setAllCaps(false);
         safe.setOnClickListener(v->{
             try {
-                startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse("https://m.youtube.com/"))
-                    .setPackage(CHROME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                startActivity(new Intent(this,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
                 guard.openSafeHome(); removeCover(); queue(0);
             } catch(RuntimeException ex) { performGlobalAction(GLOBAL_ACTION_HOME); }
         }); panel.addView(safe);
