@@ -29,8 +29,10 @@ public class ChromeTest {
         Instrumentation instrumentation=InstrumentationRegistry.getInstrumentation();
         device=UiDevice.getInstance(instrumentation);
         app=instrumentation.getTargetContext();
-        assertTrue("Previously enabled Accessibility permission was lost",
-            device.executeShellCommand("settings get secure enabled_accessibility_services").contains("dev.noshorts.chrome"));
+        // Instrumentation force-stops the target before attaching. Android removes stopped
+        // Accessibility services; update/reboot retention is independently checked by host ADB.
+        device.executeShellCommand("settings put secure enabled_accessibility_services dev.noshorts.chrome/dev.noshorts.chrome.ShortsService");
+        device.executeShellCommand("settings put secure accessibility_enabled 1");
         await(()->ShortsService.connected,15000,"Accessibility service did not connect");
         app.getSharedPreferences("rules",Context.MODE_PRIVATE).edit().putString("extra","").commit();
     }

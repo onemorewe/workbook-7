@@ -60,5 +60,13 @@ assert permissions == adb('shell', 'settings', 'get', 'secure', 'enabled_accessi
 adb('shell', 'am', 'start', '-n', PACKAGE+'/.MainActivity')
 time.sleep(2)
 assert find_id('rules_input').get('text') == 'example.test/blocked', 'Saved rules were lost after reboot'
-(RESULTS/'reboot-check.txt').write_text('PASS: reboot retained custom rule and Accessibility permission; Chrome instrumentation checks automatic service reconnection\n')
+for attempt in range(20):
+    adb('shell', 'input', 'keyevent', '3')
+    adb('shell', 'am', 'start', '-f', '0x14000000', '-n', PACKAGE+'/.MainActivity')
+    time.sleep(.7)
+    if find_id('service_status').get('text') == 'Служба подключена':
+        break
+else:
+    raise AssertionError('Accessibility service did not reconnect after reboot without re-enabling it')
+(RESULTS/'reboot-check.txt').write_text('PASS: reboot retained custom rule and Accessibility permission; service reconnected without re-enabling before instrumentation\n')
 adb('reverse', 'tcp:8765', 'tcp:8765')
