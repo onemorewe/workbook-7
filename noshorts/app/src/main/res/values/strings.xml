@@ -1,0 +1,3 @@
+<resources>
+    <string name="service_description">Блокирует адрес youtube.com/shorts в Google Chrome. Читает адресную строку Chrome, не сохраняет историю и не отправляет данные. Обычные видео доступны. Пока адрес скрыт, обнаружение нового Shorts не гарантируется.</string>
+</resources>

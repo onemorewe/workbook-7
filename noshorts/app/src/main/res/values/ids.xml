@@ -1,0 +1,6 @@
+<resources>
+    <item name="service_status" type="id" />
+    <item name="rules_input" type="id" />
+    <item name="save_rules" type="id" />
+    <item name="blocked_cover" type="id" />
+</resources>

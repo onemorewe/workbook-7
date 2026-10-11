@@ -1,0 +1,99 @@
+name: NoShorts signed Android verification
+
+on:
+  push:
+    branches: ['noshorts/**']
+    paths: ['noshorts/**', '.github/workflows/build-noshorts.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: noshorts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Restore existing signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          test -n "$KEYSTORE_BASE64" && test -n "$KEYSTORE_PASSWORD" && test -n "$KEY_ALIAS" && test -n "$KEY_PASSWORD"
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/noshorts-signing.jks"
+          chmod 600 "$RUNNER_TEMP/noshorts-signing.jks"
+          echo "KEYSTORE_PATH=$RUNNER_TEMP/noshorts-signing.jks" >> "$GITHUB_ENV"
+          echo "NOSHORTS_VERSION_CODE=$((100000 + GITHUB_RUN_NUMBER * 2))" >> "$GITHUB_ENV"
+      - name: Install SDK and prepare results
+        run: |
+          sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+          mkdir -p ci-results
+      - name: Compile and run core tests, Android lint, signed release
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          NOSHORTS_VERSION_CODE=$((NOSHORTS_VERSION_CODE - 1)) gradle --no-daemon :core:verifyRules :app:lintDebug :app:assembleRelease --stacktrace
+          cp app/build/outputs/apk/release/app-release.apk ci-results/NoShorts-previous.apk
+          gradle --no-daemon :app:assembleRelease :app:assembleDebugAndroidTest --stacktrace
+          bash ci/signature_check.sh
+      - name: Enable KVM
+        working-directory: .
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Verify signed update and Chrome on Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        with:
+          api-level: 35
+          target: google_apis_playstore
+          arch: x86_64
+          profile: pixel_7
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot-save -memory 4096
+          script: cd noshorts && bash ci/run_emulator.sh
+      - name: Collect emulator evidence
+        if: always()
+        run: |
+          adb logcat -d > ci-results/logcat.txt 2>/dev/null || true
+          adb pull /sdcard/Android/data/dev.noshorts.chrome/files/ci-evidence ci-results/device-evidence 2>/dev/null || true
+      - name: Upload verification results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: NoShorts-verification-${{ github.run_number }}
+          path: |
+            noshorts/ci-results/
+            noshorts/app/build/reports/
+            noshorts/app/build/outputs/androidTest-results/
+          retention-days: 30
+      - name: Upload verified signed APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: NoShorts-signed-${{ github.run_number }}
+          path: noshorts/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 90
+      - name: Remove signing material
+        if: always()
+        run: rm -f "$RUNNER_TEMP/noshorts-signing.jks"
