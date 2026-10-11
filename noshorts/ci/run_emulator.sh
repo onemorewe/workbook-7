@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd -- "$(dirname -- "$0")/.."
+# Keep the selected SDK image and Chrome build stable during instrumentation.
+# Play Store updated GMS in run 21; DynamiteLoader killed Chrome during navigation.
+# GMS remains enabled. This affects only the disposable CI emulator.
+adb shell pm disable-user --user 0 com.android.vending > ci-results/play-store-state.txt
 python3 ci/fixture_server.py > ci-results/fixture.log 2>&1 &
 fixture_pid=$!
 collect_evidence() {
