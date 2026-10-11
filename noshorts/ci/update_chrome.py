@@ -30,13 +30,21 @@ def download():
     client = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
     def fetch(url, referer=PAGE):
         return client.open(urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0', 'Referer': referer}), timeout=30)
-    with fetch(PAGE) as response:
-        links = Links(); links.feed(response.read().decode())
-    entry = next(a['href'] for a in links.links if 'downloadButton' in a.get('class', '') and '/download/' in a.get('href', ''))
-    landing = urllib.parse.urljoin(PAGE, entry)
-    with fetch(landing) as response:
-        links = Links(); links.feed(response.read().decode())
-    entry = next(a['href'] for a in links.links if '/wp-content/themes/APKMirror/download.php' in a.get('href', ''))
+    override = os.environ.get('CHROME_APK_URL', '').strip()
+    transfer = ROOT / 'ci/chrome-download-url.txt'
+    if not override and transfer.exists():
+        override = transfer.read_text().strip()
+    if override:
+        assert override.startswith('https://'), 'Chrome transfer URL must use HTTPS'
+        entry, landing = override, PAGE
+    else:
+        with fetch(PAGE) as response:
+            links = Links(); links.feed(response.read().decode())
+        entry = next(a['href'] for a in links.links if 'downloadButton' in a.get('class', '') and '/download/' in a.get('href', ''))
+        landing = urllib.parse.urljoin(PAGE, entry)
+        with fetch(landing) as response:
+            links = Links(); links.feed(response.read().decode())
+        entry = next(a['href'] for a in links.links if '/wp-content/themes/APKMirror/download.php' in a.get('href', ''))
     with fetch(urllib.parse.urljoin(PAGE, entry), landing) as response, APK.open('wb') as output:
         size = 0
         while True:

@@ -5,6 +5,11 @@ on:
     branches: ['noshorts/**']
     paths: ['noshorts/**', '.github/workflows/build-noshorts.yml']
   workflow_dispatch:
+    inputs:
+      chrome_apk_url:
+        description: 'Optional HTTPS URL of Chrome 154.0.8037.126 x86_64 APK; Google signature is verified'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -63,6 +68,7 @@ jobs:
       - name: Verify signed update and Chrome on Android emulator
         uses: reactivecircus/android-emulator-runner@v2
         env:
+          CHROME_APK_URL: ${{ inputs.chrome_apk_url }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
