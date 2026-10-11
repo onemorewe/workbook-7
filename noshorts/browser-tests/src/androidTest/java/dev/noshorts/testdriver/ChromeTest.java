@@ -616,4 +616,53 @@ public class ChromeTest {
             feedEvidence("LinkedIn",action.equals("Сообщения")?"-own-messages":"-own-jobs");
         }
     }
+
+    @Test public void test15HtmlBookmarkletProbe() throws Exception {
+        home();open("http://127.0.0.1:8765/safe?htmlprobe=1");
+        assertNotNull(device.wait(Until.findObject(By.text("Allowed page")),10000));
+        UiObject2 bar=device.findObject(By.res("com.android.chrome","url_bar"));assertNotNull(bar);bar.click();
+        UiAutomation automation=InstrumentationRegistry.getInstrumentation()
+            .getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES);
+        AccessibilityNodeInfo root=automation.getRootInActiveWindow();assertNotNull(root);
+        List<AccessibilityNodeInfo> editors=root.findAccessibilityNodeInfosByViewId("com.android.chrome:id/url_bar");
+        String script="javascript:(()=>{document.querySelector('h1').textContent='Fixture HTML modified';document.body.style.backgroundColor='#00ff00';})()";
+        boolean set=false,submitted=false;String entered="";
+        try {
+            for(AccessibilityNodeInfo edit:editors) if(edit.isEditable() && edit.isFocused()) {
+                android.os.Bundle args=new android.os.Bundle();
+                args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,script);
+                set=edit.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,args);break;
+            }
+        } finally { for(AccessibilityNodeInfo edit:editors) edit.recycle();root.recycle(); }
+        SystemClock.sleep(700);
+        root=automation.getRootInActiveWindow();assertNotNull(root);
+        editors=root.findAccessibilityNodeInfosByViewId("com.android.chrome:id/url_bar");
+        try {
+            for(AccessibilityNodeInfo edit:editors) if(edit.isEditable() && edit.isFocused()) {
+                entered=String.valueOf(edit.getText());
+                submitted=edit.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId());break;
+            }
+        } finally { for(AccessibilityNodeInfo edit:editors) edit.recycle();root.recycle(); }
+        long deadline=SystemClock.uptimeMillis()+6000;
+        boolean modified=false;
+        while(SystemClock.uptimeMillis()<deadline) {
+            if(device.hasObject(By.text("Fixture HTML modified"))) { modified=true;break; }
+            SystemClock.sleep(200);
+        }
+        String current=address();boolean nativeSuccess=modified && current.contains("127.0.0.1") && current.contains("/safe");
+        boolean keyFallback=false;
+        if(!nativeSuccess && entered.startsWith("javascript:") && !submitted) {
+            device.pressEnter();SystemClock.sleep(3000);
+            keyFallback=device.hasObject(By.text("Fixture HTML modified")) && address().contains("127.0.0.1");
+        }
+        File dir=new File(app.getExternalFilesDir(null),"ci-evidence");dir.mkdirs();
+        try(FileWriter writer=new FileWriter(new File(dir,"html-probe.json"))) {
+            writer.write("{\"setTextAccepted\":"+set+",\"javascriptPrefixRetained\":"+entered.startsWith("javascript:")+
+                ",\"imeActionAccepted\":"+submitted+",\"htmlChangedByAccessibility\":"+nativeSuccess+
+                ",\"hardwareEnterFallbackWorked\":"+keyFallback+"}\n");
+        }
+        System.out.println("HTML_PROBE set="+set+" prefix="+entered.startsWith("javascript:")+" submit="+submitted+" changed="+nativeSuccess+" keyFallback="+keyFallback);
+        // This is a diagnostic experiment; its result file, not test completion, reports
+        // whether Chrome accepted the JavaScript. Do not label a negative result supported.
+    }
 }
