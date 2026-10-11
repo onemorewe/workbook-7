@@ -1,0 +1,24 @@
+{
+  "versionName": "0.5.0",
+  "versionCode": 100058,
+  "package": "dev.noshorts.chrome",
+  "apkSHA256": "5d42a2efeb3ef25df6c74fb5c584d1b255be6562aff3ccc4c861ed5f1f25d154",
+  "apkSize": 27232,
+  "zipSHA256": "1d364d36bc6deb0ace0d829c49955101be4d2a6e7ab1fd59130f08164072e470",
+  "zipSize": 24268,
+  "certificateSHA256": "25606cf1c6edbfdf2ce38285a9d1e94b5b5580b198c5e40f9ec4087f7cc447f2",
+  "testedSource": "f59475b5091c47c652a5091e5ff6fd66136c0c29",
+  "workflowRun": 38166066621,
+  "runNumber": 29,
+  "workflowURL": "https://github.com/onemorewe/workbook-7/actions/runs/38166066621",
+  "coreChecks": 714,
+  "browserTests": 12,
+  "browserFailures": 0,
+  "testedEnvironment": "Android 15/API35 emulator; Chrome 154.0.8037.126",
+  "limitations": [
+    "Samsung Android16 not directly tested",
+    "Instagram/LinkedIn feeds verified with controlled HTML at real origins, not signed-in live accounts",
+    "Accessibility masking may briefly show content during load/fast scrolling",
+    "Native apps are not covered"
+  ]
+}
