@@ -9,7 +9,7 @@ collect_evidence() {
     timeout 15s adb shell dumpsys accessibility > ci-results/final-accessibility.txt 2>/dev/null
     timeout 15s adb shell dumpsys activity services dev.noshorts.chrome > ci-results/final-services.txt 2>/dev/null
     timeout 15s adb logcat -d > ci-results/logcat.txt 2>/dev/null
-    timeout 15s adb pull /sdcard/Android/data/dev.noshorts.chrome/files/ci-evidence ci-results/device-evidence >/dev/null 2>&1
+    timeout 15s adb pull /sdcard/Android/data/dev.noshorts.testdriver/files/ci-evidence ci-results/device-evidence >/dev/null 2>&1
     timeout 15s adb shell uiautomator dump /sdcard/final-ui.xml >/dev/null 2>&1
     timeout 15s adb pull /sdcard/final-ui.xml ci-results/final-ui.xml >/dev/null 2>&1
     timeout 15s adb shell screencap -p /sdcard/final-screen.png >/dev/null 2>&1
@@ -22,4 +22,4 @@ if [[ -n "${CHROME_APK_URL:-}" || -f ci/chrome-download-url.txt ]]; then
     python3 ci/update_chrome.py
 fi
 python3 ci/emulator_checks.py
-gradle --no-daemon :app:connectedReleaseAndroidTest --stacktrace
+gradle --no-daemon :browser-tests:connectedDebugAndroidTest --stacktrace

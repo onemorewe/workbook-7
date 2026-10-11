@@ -1,8 +1,9 @@
-package dev.noshorts.chrome;
+package dev.noshorts.testdriver;
 
 import android.app.Instrumentation;
 import android.app.UiAutomation;
 import android.content.Context;
+import android.content.ComponentName;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.SystemClock;
@@ -16,6 +17,7 @@ import java.io.File;
 import java.io.FileWriter;
 import java.util.function.BooleanSupplier;
 import java.util.regex.Pattern;
+import java.util.regex.Matcher;
 import static org.junit.Assert.*;
 
 @RunWith(AndroidJUnit4.class)
@@ -29,18 +31,54 @@ public class ChromeTest {
         Instrumentation instrumentation=InstrumentationRegistry.getInstrumentation();
         device=UiDevice.getInstance(instrumentation);
         app=instrumentation.getTargetContext();
-        // Instrumentation force-stops the target before attaching. Android removes stopped
-        // Accessibility services; update/reboot retention is independently checked by host ADB.
-        device.executeShellCommand("settings put secure enabled_accessibility_services dev.noshorts.chrome/dev.noshorts.chrome.ShortsService");
-        device.executeShellCommand("settings put secure accessibility_enabled 1");
-        await(()->ShortsService.connected,15000,"Accessibility service did not connect");
-        app.getSharedPreferences("rules",Context.MODE_PRIVATE).edit().putString("extra","").commit();
+        // Instrument this independent driver, never the production NoShorts process.
+        // Host tests already enabled and verified the released service across update/reboot.
+        await(()->state().connected,15000,"Released Accessibility service did not connect");
+        setRules("");
     }
     @After public void evidence() throws Exception {
         File dir=new File(app.getExternalFilesDir(null),"ci-evidence"); dir.mkdirs();
         String suffix=Long.toString(System.currentTimeMillis());
         device.dumpWindowHierarchy(new File(dir,"hierarchy-"+suffix+".xml"));
         device.takeScreenshot(new File(dir,"screen-"+suffix+".png"));
+        try(FileWriter writer=new FileWriter(new File(dir,"service-"+suffix+".txt"))) {
+            writer.write(serviceDump());
+        }
+    }
+    private static final String BLOCKER="dev.noshorts.chrome";
+    private static final class ServiceState {
+        final boolean connected,cover; final int transitions;
+        ServiceState(boolean connected,int transitions,boolean cover) {
+            this.connected=connected; this.transitions=transitions; this.cover=cover;
+        }
+    }
+    private String serviceDump() {
+        try { return device.executeShellCommand("dumpsys activity service dev.noshorts.chrome/.ShortsService"); }
+        catch(Exception ex) { throw new AssertionError("Cannot read released service diagnostics",ex); }
+    }
+    private ServiceState state() {
+        Matcher m=Pattern.compile("NoShorts connected=(true|false) transitions=(\\d+) cover=(true|false)").matcher(serviceDump());
+        if(!m.find()) return new ServiceState(false,-1,false);
+        return new ServiceState(Boolean.parseBoolean(m.group(1)),Integer.parseInt(m.group(2)),Boolean.parseBoolean(m.group(3)));
+    }
+    private UiObject2 blockerControl(String id) {
+        for(int attempt=0;attempt<10;attempt++) {
+            UiObject2 control=device.findObject(By.res(BLOCKER,id));
+            if(control!=null) return control;
+            device.swipe(device.getDisplayWidth()/2,device.getDisplayHeight()*3/4,
+                device.getDisplayWidth()/2,device.getDisplayHeight()/3,20);
+            SystemClock.sleep(300);
+        }
+        throw new AssertionError("NoShorts control unavailable: "+id);
+    }
+    private void setRules(String value) {
+        app.startActivity(new Intent().setComponent(new ComponentName(BLOCKER,BLOCKER+".MainActivity"))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        assertTrue("NoShorts settings did not open",device.wait(Until.hasObject(By.pkg(BLOCKER)),5000));
+        blockerControl("rules_input").setText(value);
+        if(device.hasObject(By.pkg("com.google.android.inputmethod.latin"))) device.pressBack();
+        blockerControl("save_rules").click();
+        SystemClock.sleep(300);
     }
     private void open(String url) {
         app.startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(url)).setPackage("com.android.chrome")
@@ -54,7 +92,7 @@ public class ChromeTest {
         }
         UiObject2 bar=device.findObject(By.res("com.android.chrome","url_bar"));
         throw new AssertionError(message+"; url_bar="+(bar==null?"<missing>":bar.getText())+
-            "; connected="+ShortsService.connected+"; transitions="+ShortsService.blockedTransitions+"; cover="+ShortsService.coverVisible);
+            "; connected="+state().connected+"; transitions="+state().transitions+"; cover="+state().cover);
     }
     private void home() {
         open("https://m.youtube.com/");
@@ -64,13 +102,13 @@ public class ChromeTest {
             if(safe!=null) safe.click();
             UiObject2 onboarding=device.findObject(By.text(Pattern.compile("(?i)(use without an account|accept & continue|no thanks|got it|skip)")));
             if(onboarding!=null) onboarding.click();
-            if(device.hasObject(By.res("com.android.chrome","url_bar")) && onboarding==null && !ShortsService.coverVisible) break;
+            if(device.hasObject(By.res("com.android.chrome","url_bar")) && onboarding==null && !state().cover) break;
             SystemClock.sleep(300);
         }
         assertTrue("Chrome address bar unavailable",device.hasObject(By.res("com.android.chrome","url_bar")));
     }
     private void blockedOutcome(int before,String message) {
-        await(()->ShortsService.blockedTransitions>before,20000,message);
+        await(()->state().transitions>before,20000,message);
         await(()->{
             if(device.hasObject(By.text("Этот раздел заблокирован"))) return true;
             UiObject2 bar=device.findObject(By.res("com.android.chrome","url_bar"));
@@ -78,45 +116,45 @@ public class ChromeTest {
         },7000,"Shorts still exposed after detection");
     }
     @Test public void test01OrdinaryYouTubeIsAllowed() {
-        home(); int before=ShortsService.blockedTransitions;
+        home(); int before=state().transitions;
         open("https://m.youtube.com/results?search_query=shorts");
         SystemClock.sleep(5000);
-        assertEquals("Search was falsely blocked",before,ShortsService.blockedTransitions);
-        assertFalse("Search is covered",ShortsService.coverVisible);
+        assertEquals("Search was falsely blocked",before,state().transitions);
+        assertFalse("Search is covered",state().cover);
         open("https://m.youtube.com/watch?v=wmzbgQAqjvI");
         SystemClock.sleep(5000);
-        assertEquals("Ordinary player was falsely blocked",before,ShortsService.blockedTransitions);
-        assertFalse("Ordinary player is covered",ShortsService.coverVisible);
+        assertEquals("Ordinary player was falsely blocked",before,state().transitions);
+        assertFalse("Ordinary player is covered",state().cover);
     }
     @Test public void test02DirectShortsIsBlocked() {
-        home(); int before=ShortsService.blockedTransitions;
+        home(); int before=state().transitions;
         open("https://m.youtube.com/shorts/wmzbgQAqjvI");
         blockedOutcome(before,"Direct YouTube Shorts was not detected");
         device.pressHome();
-        await(()->!ShortsService.coverVisible,3000,"Cover leaked outside Chrome");
+        await(()->!state().cover,3000,"Cover leaked outside Chrome");
     }
     @Test public void test03YouTubeNavigationIsBlocked() {
         home();
         UiObject2 shorts=device.wait(Until.findObject(By.text("Shorts")),25000);
         if(shorts==null) shorts=device.findObject(By.desc("Shorts"));
         assertNotNull("Live YouTube Shorts entry was not available; this test must not be silently skipped",shorts);
-        int before=ShortsService.blockedTransitions;
+        int before=state().transitions;
         shorts.click();
         blockedOutcome(before,"YouTube in-page Shorts navigation was not blocked");
     }
     @Test public void test04ChromeHistoryApiAndCustomPath() {
         home();
-        app.getSharedPreferences("rules",Context.MODE_PRIVATE).edit().putString("extra","127.0.0.1/shorts").commit();
+        setRules("127.0.0.1/shorts");
         open("http://127.0.0.1:8765/safe");
         UiObject2 action=device.wait(Until.findObject(By.text("Open Shorts route")),20000);
         assertNotNull("Local SPA fixture unavailable",action);
-        int before=ShortsService.blockedTransitions;
+        int before=state().transitions;
         action.click();
         blockedOutcome(before,"Chrome pushState navigation was not blocked by exact URL rules");
     }
     @Test public void test05NavigationAfterToolbarScroll() throws Exception {
         home();
-        app.getSharedPreferences("rules",Context.MODE_PRIVATE).edit().putString("extra","127.0.0.1/shorts").commit();
+        setRules("127.0.0.1/shorts");
         open("http://127.0.0.1:8765/safe?scroll=1");
         assertNotNull("Scroll fixture unavailable",device.wait(Until.findObject(By.text("Open Shorts route")),20000));
         device.swipe(device.getDisplayWidth()/2,device.getDisplayHeight()*3/4,
@@ -131,18 +169,18 @@ public class ChromeTest {
         }
         UiObject2 action=device.findObject(By.text("Open Shorts route"));
         assertNotNull("Fixed navigation button unavailable after scroll",action);
-        int before=ShortsService.blockedTransitions;
+        int before=state().transitions;
         action.click();
         blockedOutcome(before,"Navigation after toolbar scroll was not blocked");
     }
     @Test public void test06RepeatedShortsAndReturnFromHome() {
         home();
         for(int attempt=0;attempt<3;attempt++) {
-            int before=ShortsService.blockedTransitions;
+            int before=state().transitions;
             open("https://m.youtube.com/shorts/wmzbgQAqjvI");
             blockedOutcome(before,"Repeated Shorts entry was not blocked: "+attempt);
             device.pressHome();
-            await(()->!ShortsService.coverVisible,3000,"Cover remained outside Chrome");
+            await(()->!state().cover,3000,"Cover remained outside Chrome");
             home();
         }
     }

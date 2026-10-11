@@ -57,7 +57,7 @@ jobs:
         run: |
           NOSHORTS_VERSION_CODE=$((NOSHORTS_VERSION_CODE - 1)) gradle --no-daemon :core:verifyRules :app:lintRelease :app:assembleRelease --stacktrace
           cp app/build/outputs/apk/release/app-release.apk ci-results/NoShorts-previous.apk
-          gradle --no-daemon :app:assembleRelease :app:assembleReleaseAndroidTest --stacktrace
+          gradle --no-daemon :app:assembleRelease :browser-tests:assembleDebug :browser-tests:assembleDebugAndroidTest --stacktrace
           bash ci/signature_check.sh
       - name: Enable KVM
         working-directory: .
@@ -88,7 +88,8 @@ jobs:
           path: |
             noshorts/ci-results/
             noshorts/app/build/reports/
-            noshorts/app/build/outputs/androidTest-results/
+            noshorts/browser-tests/build/reports/
+            noshorts/browser-tests/build/outputs/androidTest-results/
           retention-days: 30
       - name: Upload verified signed APK
         uses: actions/upload-artifact@v4

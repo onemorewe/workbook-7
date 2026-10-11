@@ -18,6 +18,8 @@ import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import java.util.List;
+import java.io.FileDescriptor;
+import java.io.PrintWriter;
 import dev.noshorts.core.Guard;
 import dev.noshorts.core.UrlRules;
 
@@ -134,6 +136,10 @@ public final class ShortsService extends AccessibilityService implements SharedP
         coverVisible=false;
     }
     @Override public void onInterrupt() { removeCover(); }
+    @Override protected void dump(FileDescriptor fd, PrintWriter writer, String[] args) {
+        // System shell diagnostics only; no URL, page text or browsing history is exposed.
+        writer.println("NoShorts connected="+connected+" transitions="+blockedTransitions+" cover="+coverVisible);
+    }
     @Override public void onDestroy() {
         connected=false; handler.removeCallbacksAndMessages(null); queued=false; removeCover();
         if(preferences!=null) preferences.unregisterOnSharedPreferenceChangeListener(this);
