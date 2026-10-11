@@ -51,7 +51,7 @@ public class ChromeTest {
         try(FileWriter writer=new FileWriter(new File(dir,"service-"+suffix+".txt"))) {
             writer.write(serviceDump());
         }
-        AccessibilityNodeInfo root=InstrumentationRegistry.getInstrumentation().getUiAutomation().getRootInActiveWindow();
+        AccessibilityNodeInfo root=InstrumentationRegistry.getInstrumentation().getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES).getRootInActiveWindow();
         try(FileWriter writer=new FileWriter(new File(dir,"chrome-nodes-"+suffix+".txt"))) {
             writeNodes(writer,root,0);
         } finally { if(root!=null) root.recycle(); }
@@ -122,7 +122,7 @@ public class ChromeTest {
     }
     private List<Rect> liveShortsCards() {
         List<Rect> result=new ArrayList<>();
-        AccessibilityNodeInfo root=InstrumentationRegistry.getInstrumentation().getUiAutomation().getRootInActiveWindow();
+        AccessibilityNodeInfo root=InstrumentationRegistry.getInstrumentation().getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES).getRootInActiveWindow();
         try { collectCards(root,result,0); }
         finally { if(root!=null) root.recycle(); }
         return result;
@@ -188,10 +188,16 @@ public class ChromeTest {
             if(onboarding!=null) {
                 try { onboarding.click(); } catch(StaleObjectException ignored) { continue; }
             }
-            if(device.hasObject(By.res("com.android.chrome","url_bar")) && onboarding==null && !state().cover) break;
+            UiObject2 current=device.findObject(By.res("com.android.chrome","url_bar"));
+            if(current!=null && onboarding==null && !state().cover &&
+                "com.android.chrome".equals(device.getCurrentPackageName())) {
+                try { if(current.getText().contains("/results")) break; }
+                catch(StaleObjectException ignored) { }
+            }
             SystemClock.sleep(300);
         }
         assertTrue("Chrome address bar unavailable",device.hasObject(By.res("com.android.chrome","url_bar")));
+        assertEquals("Chrome did not become the foreground app","com.android.chrome",device.getCurrentPackageName());
     }
     private void blockedOutcome(int before,String message) {
         await(()->state().transitions>before,20000,message);

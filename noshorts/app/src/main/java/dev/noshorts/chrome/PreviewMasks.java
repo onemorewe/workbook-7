@@ -30,7 +30,7 @@ final class PreviewMasks {
     static boolean isShortsAction(AccessibilityNodeInfo node,boolean youtube) {
         CharSequence description=node.getContentDescription();
         return youtube && description!=null && description.toString().matches(
-            "(?s).+ - (play Short|воспроизвести Short|воспроизвести Shorts|смотреть Shorts)( New| Новинка)?$");
+            "(?s).+ - (play Short|воспроизвести Short|воспроизвести Shorts|смотреть Shorts)( New| 4K| HD| Новинка| Новое)*$");
     }
     void update(AccessibilityNodeInfo root,boolean youtube) {
         remaining=1400;
@@ -108,12 +108,10 @@ final class PreviewMasks {
             s.regions.addAll(c.regions);
         }
         Rect bounds=new Rect(); node.getBoundsInScreen(bounds);
-        // Promote up to two containers around a link to include the whole thumbnail/card.
-        // Never promote a partial traversal or a mixed shelf containing ordinary links.
+        // Use the link/control itself. Enlarging to surrounding containers can cover
+        // unrelated controls, particularly with YouTube's fixed navigation bar.
         boolean exact=action || (target!=null && UrlRules.isShorts(target.toString()));
-        boolean card=s.shorts && !s.other && !s.incomplete && s.distance<=2 && depth>0 &&
-            bounds.height()<=viewport.height()/2 && bounds.width()<=viewport.width();
-        if((exact || card) && !bounds.isEmpty() && bounds.intersect(viewport)) {
+        if(exact && !bounds.isEmpty() && bounds.intersect(viewport)) {
             bounds.inset(-2,-2);
             bounds.intersect(viewport);
             s.regions.clear(); s.regions.add(bounds);
