@@ -474,17 +474,26 @@ public class ChromeTest {
             UiObject2 dynamic=device.wait(Until.findObject(By.text("Dynamic feed post")),5000);assertNotNull(dynamic);
             assertPainted(dynamic.getVisibleBounds(),Color.rgb(18,22,30),"New feed content exposed");
             UiObject2 second=null;
-            for(int i=0;i<7 && second==null;i++) {
-                device.swipe(device.getDisplayWidth()*4/5,device.getDisplayHeight()*3/4,
-                    device.getDisplayWidth()*4/5,device.getDisplayHeight()/3,25);
-                SystemClock.sleep(500);second=visible(By.text("Fixture feed post two"));
+            for(int i=0;i<15 && second==null;i++) {
+                // A slow drag avoids flinging the card behind the fixed header/footer.
+                device.swipe(device.getDisplayWidth()*4/5,device.getDisplayHeight()*2/3,
+                    device.getDisplayWidth()*4/5,device.getDisplayHeight()/2,200);
+                SystemClock.sleep(500);
+                UiObject2 candidate=visible(By.text("Fixture feed post two"));
+                if(candidate!=null) {
+                    Rect bounds=candidate.getVisibleBounds();
+                    if(bounds.height()>device.getDisplayHeight()/8 && bounds.top>device.getDisplayHeight()/4 &&
+                        bounds.bottom<device.getDisplayHeight()*9/10) second=candidate;
+                }
             }
-            assertNotNull("Second feed post unavailable after scroll",second);
-            assertPainted(second.getVisibleBounds(),Color.rgb(18,22,30),"Feed contents exposed after scroll");
+            assertNotNull("Second feed post unavailable inside content area",second);
+            feedEvidence(site,"-scrolled");
+            assertPainted(corner(second.getVisibleBounds()),Color.rgb(18,22,30),"Feed contents exposed after scroll");
             messages=visible(By.text("Messages"));assertNotNull(messages);messages.click();
             UiObject2 safe=device.wait(Until.findObject(By.text("Fixture safe destination")),7000);assertNotNull(safe);
             await(()->feedMaskCount()==0,5000,"Feed mask remained on a safe destination");
             assertPainted(corner(safe.getVisibleBounds()),Color.GREEN,"Safe destination was hidden");
+            feedEvidence(site,"-safe");
             assertEquals("Menu or messages caused a block",before,state().transitions);
         }
         injectFeed("YouTube"); device.pressHome();
