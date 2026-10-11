@@ -1,3 +1,4 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application android:label="NoShorts test driver" android:allowBackup="false" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <application android:label="NoShorts test driver" android:allowBackup="false" android:usesCleartextTraffic="true" />
 </manifest>

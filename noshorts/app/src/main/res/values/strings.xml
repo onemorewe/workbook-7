@@ -1,3 +1,3 @@
 <resources>
-    <string name="service_description">Блокирует Shorts и ленты YouTube, Instagram и LinkedIn в Google Chrome. Закрывает превью Shorts масками. Читает адрес страницы и адреса ссылок Chrome, не сохраняет историю и не отправляет данные. Поиск, обычные видео, сообщения и вакансии доступны.</string>
+    <string name="service_description">Скрывает содержимое лент YouTube, Instagram и LinkedIn в Google Chrome, сохраняя меню и поиск. Блокирует Shorts и скрывает их превью. Читает адрес страницы и структуру Chrome, не сохраняет историю и не отправляет данные.</string>
 </resources>

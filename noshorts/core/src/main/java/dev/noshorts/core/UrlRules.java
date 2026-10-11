@@ -30,7 +30,7 @@ public final class UrlRules {
         Address a = parse(displayedAddress);
         if (a == null) return Verdict.UNKNOWN;
         if (a.internal) return Verdict.ALLOW;
-        if (isShorts(displayedAddress) || feedSite(displayedAddress)!=null) return Verdict.BLOCK;
+        if (isShorts(displayedAddress)) return Verdict.BLOCK;
         for (Rule r : extra) if (r.matches(a)) return Verdict.BLOCK;
         return Verdict.ALLOW;
     }
@@ -48,13 +48,15 @@ public final class UrlRules {
     public static String feedSite(String input) {
         Address a=parse(input);
         if(a==null || a.internal) return null;
-        if(new Rule("youtube.com","/").matches(a) &&
-            (a.path.equals("/") || new Rule("youtube.com","/feed").matches(a))) return "YouTube";
+        if(new Rule("youtube.com","/").matches(a) && (a.path.equals("/") || a.path.equals("/feed") ||
+            new Rule("youtube.com","/feed/subscriptions").matches(a) ||
+            new Rule("youtube.com","/feed/trending").matches(a) ||
+            new Rule("youtube.com","/feed/explore").matches(a))) return "YouTube";
         if(new Rule("instagram.com","/").matches(a) && (a.path.equals("/") ||
             new Rule("instagram.com","/feed").matches(a) || new Rule("instagram.com","/explore").matches(a) ||
             new Rule("instagram.com","/reel").matches(a) || new Rule("instagram.com","/reels").matches(a))) return "Instagram";
         if(new Rule("linkedin.com","/").matches(a) &&
-            (a.path.equals("/") || new Rule("linkedin.com","/feed").matches(a))) return "LinkedIn";
+            (a.path.equals("/") || a.path.equals("/feed"))) return "LinkedIn";
         return null;
     }
 

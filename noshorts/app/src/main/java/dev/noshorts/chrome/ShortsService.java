@@ -38,13 +38,16 @@ public final class ShortsService extends AccessibilityService implements SharedP
     private long lastBack;
     private SharedPreferences preferences;
     private PreviewMasks previews;
+    private FeedMasks feeds;
     private boolean youtubePage;
+    private String feedSite;
     private long pendingBlockUntil;
     private final Runnable poll=()->{queued=false; scan();};
 
     @Override public void onServiceConnected() {
         connected=true;
         previews=new PreviewMasks(this);
+        feeds=new FeedMasks(this);
         preferences=getSharedPreferences("rules",MODE_PRIVATE);
         preferences.registerOnSharedPreferenceChangeListener(this);
         loadRules(); queue(0);
@@ -97,7 +100,7 @@ public final class ShortsService extends AccessibilityService implements SharedP
         AccessibilityNodeInfo root=null;
         try {
             root=chromeRoot();
-            if(root==null) { removeCover(); previews.clear(); queue(250); return; }
+            if(root==null) { removeCover(); previews.clear(); feeds.clear(); queue(250); return; }
             UrlRules.Verdict verdict=addressVerdict(root);
             // A click is a navigation request. Keep it covered while Chrome still reports
             // the previous allowed page; the real URL or Guard takes over after this interval.
@@ -107,6 +110,7 @@ public final class ShortsService extends AccessibilityService implements SharedP
             if(blocked && !wasBlocked) blockedTransitions++;
             if(blocked) {
                 previews.clear();
+                feeds.clear();
                 showCover();
                 // One Back request on entry, no cooldown that turns detection off.
                 // If Back does not navigate, the cover remains and the user can open safe home.
@@ -115,8 +119,9 @@ public final class ShortsService extends AccessibilityService implements SharedP
             } else {
                 removeCover();
                 previews.update(root,youtubePage);
+                feeds.update(root,feedSite);
             }
-            queue(previews.count()>0?120:250);
+            queue(previews.count()>0 || feeds.count()>0?120:250);
         } catch(RuntimeException ex) {
             // Tree/window can disappear mid-read; preserve the guard decision and retry.
             queue(250);
@@ -132,6 +137,7 @@ public final class ShortsService extends AccessibilityService implements SharedP
                 UrlRules.Verdict verdict=rules.evaluate(ChromeAddress.fromNodeText(text==null ? null : text.toString()));
                 if(verdict!=UrlRules.Verdict.UNKNOWN) {
                     youtubePage=UrlRules.isYouTube(ChromeAddress.fromNodeText(text==null?null:text.toString()));
+                    feedSite=UrlRules.feedSite(ChromeAddress.fromNodeText(text==null?null:text.toString()));
                     return verdict;
                 }
             }
@@ -145,7 +151,7 @@ public final class ShortsService extends AccessibilityService implements SharedP
             for(String key:new String[]{"AccessibilityNodeInfo.targetUrl","url"}) {
                 CharSequence text=node.getExtras().getCharSequence(key);
                 UrlRules.Verdict v=rules.evaluate(text==null?null:text.toString());
-                if(v!=UrlRules.Verdict.UNKNOWN) { youtubePage=UrlRules.isYouTube(text.toString()); return v; }
+                if(v!=UrlRules.Verdict.UNKNOWN) { youtubePage=UrlRules.isYouTube(text.toString()); feedSite=UrlRules.feedSite(text.toString()); return v; }
             }
             return UrlRules.Verdict.UNKNOWN;
         }
@@ -163,7 +169,7 @@ public final class ShortsService extends AccessibilityService implements SharedP
         LinearLayout panel=new LinearLayout(this); panel.setId(R.id.blocked_cover); panel.setOrientation(LinearLayout.VERTICAL); panel.setGravity(Gravity.CENTER);
         panel.setPadding(40,40,40,40); panel.setBackgroundColor(Color.rgb(18,22,30));
         TextView title=new TextView(this); title.setText("Этот раздел заблокирован"); title.setTextColor(Color.WHITE); title.setTextSize(26); panel.addView(title);
-        TextView details=new TextView(this); details.setText("Ленты и короткие ролики закрыты.\nПоиск, обычные видео, сообщения и вакансии доступны."); details.setTextColor(Color.LTGRAY); details.setTextSize(16); details.setPadding(0,25,0,25); panel.addView(details);
+        TextView details=new TextView(this); details.setText("Короткие ролики и дополнительные запреты закрыты.\nЛенты открываются со скрытым содержимым. Поиск, обычные видео и сообщения доступны."); details.setTextColor(Color.LTGRAY); details.setTextSize(16); details.setPadding(0,25,0,25); panel.addView(details);
         Button safe=new Button(this); safe.setText("Поиск и сообщения"); safe.setAllCaps(false);
         safe.setOnClickListener(v->{
             try {
@@ -187,15 +193,16 @@ public final class ShortsService extends AccessibilityService implements SharedP
         cover=null;
         coverVisible=false;
     }
-    @Override public void onInterrupt() { removeCover(); if(previews!=null) previews.clear(); }
+    @Override public void onInterrupt() { removeCover(); if(previews!=null) previews.clear(); if(feeds!=null) feeds.clear(); }
     @Override protected void dump(FileDescriptor fd, PrintWriter writer, String[] args) {
         // System shell diagnostics only; no URL, page text or browsing history is exposed.
         writer.println("NoShorts connected="+connected+" transitions="+blockedTransitions+" cover="+coverVisible+
-            " masks="+(previews==null?0:previews.count()));
+            " masks="+(previews==null?0:previews.count())+" feedMasks="+(feeds==null?0:feeds.count()));
     }
     @Override public void onDestroy() {
         connected=false; handler.removeCallbacksAndMessages(null); queued=false; removeCover();
         if(previews!=null) previews.clear();
+        if(feeds!=null) feeds.clear();
         if(preferences!=null) preferences.unregisterOnSharedPreferenceChangeListener(this);
         super.onDestroy();
     }

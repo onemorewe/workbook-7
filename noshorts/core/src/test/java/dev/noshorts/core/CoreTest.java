@@ -9,11 +9,11 @@ public final class CoreTest {
     private static void check(boolean value, String message) { checks++; if(!value) throw new AssertionError(message); }
     public static void main(String[] args) {
         UrlRules r = new UrlRules("");
-        String[] blocked={"https://youtube.com", "https://m.youtube.com/", "https://youtube.com/shorts", "youtube.com/shorts/abc", "m.youtube.com/shorts/abc?feature=share",
+        String[] blocked={"https://youtube.com/shorts", "youtube.com/shorts/abc", "m.youtube.com/shorts/abc?feature=share",
             "https://www.youtube.com/shorts/abc#x", "HTTPS://WWW.YOUTUBE.COM/shorts/a", "//m.youtube.com/shorts/a",
             "https://youtube.com:443/shorts/a", "https://youtube.com./shorts/a", "https://youtube.com/%73horts/a",
             "https://youtube.com/a/../shorts/a", "https://youtube.com//shorts//a", "https://youtube.com/%2Fshorts/a"};
-        String[] allowed={"https://youtube.com/watch?v=shorts",
+        String[] allowed={"https://youtube.com", "https://m.youtube.com/", "https://youtube.com/watch?v=shorts",
             "https://youtube.com/results?search_query=shorts", "https://youtube.com/@creator/shorts", "https://youtube.com/shortsFake",
             "https://youtube.com/shorts/../watch?v=x", "https://google.com/search?q=youtube.com/shorts/a",
             "https://youtube.com.evil.example/shorts/a", "https://notyoutube.com/shorts/a", "https://youtube.com@evil.example/shorts/a",
@@ -26,7 +26,14 @@ public final class CoreTest {
         for(String s:new String[]{"www.youtube.com/?theme=dark","youtube.com/feed/subscriptions","m.youtube.com/feed/trending",
             "instagram.com","www.instagram.com/?variant=following","instagram.com/feed","instagram.com/explore/tags/a",
             "instagram.com/reels","instagram.com/reel/id","www.linkedin.com","www.linkedin.com/feed/?trk=x",
-            "www.linkedin.com/feed/update/urn:li:activity:123","https://instagram.com/a/../"}) expect(r,s,UrlRules.Verdict.BLOCK);
+            "www.linkedin.com/feed/update/urn:li:activity:123","https://instagram.com/a/../"}) expect(r,s,UrlRules.Verdict.ALLOW);
+        for(String s:new String[]{"m.youtube.com/","youtube.com/feed/subscriptions","youtube.com/feed/trending",
+            "instagram.com/","instagram.com/explore/","instagram.com/reels/","linkedin.com/feed/?trk=x"})
+            check(UrlRules.feedSite(s)!=null,"Feed page must be classified for masking: "+s);
+        for(String s:new String[]{"youtube.com/watch?v=x","youtube.com/results?q=x","youtube.com/feed/history",
+            "youtube.com/feed/you","youtube.com/feed/playlists","instagram.com/direct/inbox/","instagram.com/p/id/",
+            "linkedin.com/feed/update/urn:li:activity:123","linkedin.com/jobs/","linkedin.com.evil.example/feed/"})
+            check(UrlRules.feedSite(s)==null,"Ordinary page must not be classified as a feed: "+s);
         for(String s:new String[]{"youtube.com/results?search_query=cats","youtube.com/watch?v=abc","youtube.com/@channel/videos",
             "instagram.com/direct/inbox/","instagram.com/accounts/login/","instagram.com/alice/","instagram.com/p/post",
             "linkedin.com/messaging/thread/1","linkedin.com/jobs/search/?keywords=software","linkedin.com/in/stas/",

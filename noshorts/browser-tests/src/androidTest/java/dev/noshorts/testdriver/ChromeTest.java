@@ -25,6 +25,9 @@ import java.util.List;
 import java.util.function.BooleanSupplier;
 import java.util.regex.Pattern;
 import java.util.regex.Matcher;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.io.InputStream;
 import static org.junit.Assert.*;
 
 @RunWith(AndroidJUnit4.class)
@@ -92,6 +95,46 @@ public class ChromeTest {
     private int maskCount() {
         Matcher m=Pattern.compile("masks=(\\d+)").matcher(serviceDump());
         return m.find()?Integer.parseInt(m.group(1)):-1;
+    }
+    private int feedMaskCount() {
+        Matcher m=Pattern.compile("feedMasks=(\\d+)").matcher(serviceDump());
+        return m.find()?Integer.parseInt(m.group(1)):-1;
+    }
+    private String address() {
+        UiObject2 bar=device.findObject(By.res("com.android.chrome","url_bar"));
+        try { return bar==null?"":bar.getText(); } catch(StaleObjectException ignored) { return ""; }
+    }
+    private void injectFeed(String site) throws Exception { injectFeed(site,false); }
+    private void injectFeed(String site,boolean login) throws Exception {
+        open("http://127.0.0.1:8765/feed-fixture-start?site="+site);
+        assertNotNull("Feed fixture start unavailable",device.wait(Until.findObject(By.text("Allowed page")),20000));
+        HttpURLConnection c=(HttpURLConnection)new URL("http://127.0.0.1:8765/inject-feed?site="+site+(login?"&login=1":"")).openConnection();
+        c.setConnectTimeout(10000); c.setReadTimeout(35000);
+        try {
+            int code=c.getResponseCode();
+            InputStream in=code==200?c.getInputStream():c.getErrorStream();
+            String body=new String(in.readAllBytes(),java.nio.charset.StandardCharsets.UTF_8);
+            assertEquals("CDP feed fixture failed: "+body,200,code);
+        } finally { c.disconnect(); }
+        if(!login) await(()->feedMaskCount()>0,10000,"Feed contents did not get a mask: "+site);
+    }
+    private UiObject2 webSearchField() {
+        for(UiObject2 edit:device.findObjects(By.clazz("android.widget.EditText"))) {
+            try {
+                if(!"com.android.chrome:id/url_bar".equals(edit.getResourceName()) && !edit.getVisibleBounds().isEmpty()) return edit;
+            } catch(StaleObjectException ignored) { }
+        }
+        return null;
+    }
+    private Rect corner(Rect r) { return new Rect(r.left+5,r.top+5,r.left+7,r.top+7); }
+    private void feedEvidence(String site,String suffix) throws Exception {
+        File dir=new File(app.getExternalFilesDir(null),"ci-evidence");dir.mkdirs();
+        device.takeScreenshot(new File(dir,"feed-"+site+suffix+".png"));
+        device.dumpWindowHierarchy(new File(dir,"feed-"+site+suffix+".xml"));
+        AccessibilityNodeInfo root=InstrumentationRegistry.getInstrumentation()
+            .getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES).getRootInActiveWindow();
+        try(FileWriter writer=new FileWriter(new File(dir,"feed-"+site+suffix+"-nodes.txt"))) { writeNodes(writer,root,0); }
+        finally { if(root!=null) root.recycle(); }
     }
     private void assertPainted(Rect r,int expected,String label) {
         await(()->painted(r,expected),7000,label);
@@ -344,13 +387,15 @@ public class ChromeTest {
         assertEquals("Search results were blocked instead of masking cards",before,state().transitions);
         assertFalse("Live results had a full page cover",state().cover);
     }
-    @Test public void test09FeedPagesBlockedAndSafeRoutesAllowed() {
+    @Test public void test09FeedPagesOpenAndSafeRoutesAllowed() {
         home();
         for(String url:new String[]{"https://m.youtube.com/","https://m.youtube.com/feed/subscriptions",
             "https://www.instagram.com/","https://www.instagram.com/reels/","https://www.linkedin.com/feed/"}) {
             int before=state().transitions; open(url);
-            await(()->state().transitions>before,12000,"Feed route was not blocked: "+url);
-            device.pressHome(); await(()->!state().cover,3000,"Feed cover leaked outside Chrome");
+            SystemClock.sleep(4500);
+            assertEquals("Feed navigation was blocked: "+url,before,state().transitions);
+            assertFalse("Feed had a blocking full-screen cover: "+url,state().cover);
+            device.pressHome(); await(()->feedMaskCount()==0 && !state().cover,3000,"Feed masks leaked outside Chrome");
             home();
         }
         for(String url:new String[]{"https://www.instagram.com/direct/inbox/","https://www.linkedin.com/messaging/",
@@ -358,6 +403,78 @@ public class ChromeTest {
             home(); int before=state().transitions; open(url); SystemClock.sleep(4500);
             assertEquals("Safe route was blocked: "+url,before,state().transitions);
             assertFalse("Safe route was covered: "+url,state().cover);
+        }
+    }
+    @Test public void test10FeedMasksPreserveNavigationMenusAndSafePages() throws Exception {
+        home();
+        for(String site:new String[]{"YouTube","Instagram","LinkedIn"}) {
+            int before=state().transitions; injectFeed(site);
+            String prefix=site.equals("YouTube")?"m.youtube.com":site.equals("Instagram")?"instagram.com":"linkedin.com/feed";
+            await(()->address().contains(prefix),5000,"Fixture feed address was lost");
+            assertEquals("Feed caused Back/blocking navigation",before,state().transitions);
+            assertFalse("Feed used the blocking cover",state().cover);
+            UiObject2 post=device.wait(Until.findObject(By.text("Fixture feed post one")),5000);
+            assertNotNull(post);assertPainted(post.getVisibleBounds(),Color.rgb(18,22,30),"Feed post exposed: "+site);
+            String name=site.equals("YouTube")?"Сундар Пичаи":site.equals("Instagram")?"Марк Цукерберг":"Сатья Наделла";
+            assertNotNull("Personalized feed caption unavailable",device.wait(Until.findObject(By.text(Pattern.compile("(?s).*"+name+".*"))),5000));
+            UiObject2 search=device.findObject(By.desc("Fixture search"));assertNotNull(search);
+            assertPainted(corner(search.getVisibleBounds()),Color.GREEN,"Feed search input was hidden");
+            UiObject2 messages=visible(By.text("Messages"));assertNotNull(messages);
+            assertPainted(corner(messages.getVisibleBounds()),Color.GREEN,"Bottom navigation was hidden");
+            feedEvidence(site,"");
+            UiObject2 menu=visible(By.text("Fixture menu"));assertNotNull(menu);menu.click();
+            UiObject2 panel=device.wait(Until.findObject(By.desc("Fixture options")),5000);
+            if(panel==null) panel=device.findObject(By.text("Fixture menu panel"));
+            assertNotNull("Feed menu did not open",panel);
+            assertPainted(corner(panel.getVisibleBounds()),Color.CYAN,"Feed mask covered an open menu");
+            feedEvidence(site,"-menu");
+            UiObject2 close=visible(By.text("Close menu"));assertNotNull(close);close.click();
+            UiObject2 add=visible(By.text("Add feed card"));assertNotNull(add);add.click();
+            UiObject2 dynamic=device.wait(Until.findObject(By.text("Dynamic feed post")),5000);assertNotNull(dynamic);
+            assertPainted(dynamic.getVisibleBounds(),Color.rgb(18,22,30),"New feed content exposed");
+            UiObject2 second=null;
+            for(int i=0;i<7 && second==null;i++) {
+                device.swipe(device.getDisplayWidth()*4/5,device.getDisplayHeight()*3/4,
+                    device.getDisplayWidth()*4/5,device.getDisplayHeight()/3,25);
+                SystemClock.sleep(500);second=visible(By.text("Fixture feed post two"));
+            }
+            assertNotNull("Second feed post unavailable after scroll",second);
+            assertPainted(second.getVisibleBounds(),Color.rgb(18,22,30),"Feed contents exposed after scroll");
+            messages=visible(By.text("Messages"));assertNotNull(messages);messages.click();
+            UiObject2 safe=device.wait(Until.findObject(By.text("Fixture safe destination")),7000);assertNotNull(safe);
+            await(()->feedMaskCount()==0,5000,"Feed mask remained on a safe destination");
+            assertPainted(corner(safe.getVisibleBounds()),Color.GREEN,"Safe destination was hidden");
+            assertEquals("Menu or messages caused a block",before,state().transitions);
+        }
+        injectFeed("YouTube"); device.pressHome();
+        await(()->feedMaskCount()==0,3000,"Feed mask remained outside Chrome");
+    }
+    @Test public void test11LiveYouTubeFeedStaysOpenWithSearchAvailable() throws Exception {
+        home();int before=state().transitions;
+        open("https://m.youtube.com/");
+        await(()->feedMaskCount()>0,20000,"Live YouTube home feed was not hidden");
+        assertEquals("Live home was blocked instead of opened",before,state().transitions);
+        assertFalse("Live home used a full blocking cover",state().cover);
+        assertFalse("Live home navigated back to search",address().contains("/results"));
+        UiObject2 search=device.wait(Until.findObject(By.desc(Pattern.compile("(?i)(Search YouTube|Search|Поиск|Поиск на YouTube)"))),10000);
+        assertNotNull("Live YouTube search control unavailable",search);
+        feedEvidence("YouTube","-live");search.click();
+        await(()->webSearchField()!=null,7000,"YouTube web search field did not open");
+        UiObject2 input=webSearchField();assertNotNull(input);
+        input.setText("ordinary video");device.pressEnter();
+        await(()->address().contains("/results") && feedMaskCount()==0,12000,"Search did not leave the hidden feed");
+        assertEquals("Search was blocked after opening the feed",before,state().transitions);
+    }
+    @Test public void test12FeedLoginFormsStayVisible() throws Exception {
+        home();
+        for(String site:new String[]{"Instagram","LinkedIn"}) {
+            int before=state().transitions;injectFeed(site,true);
+            UiObject2 form=device.wait(Until.findObject(By.text("Fixture sign-in")),5000);assertNotNull(form);
+            await(()->feedMaskCount()==0,5000,"Feed mask concealed a sign-in form");
+            assertPainted(corner(form.getVisibleBounds()),Color.GREEN,"Sign-in heading was hidden");
+            assertNotNull(device.findObject(By.desc("Fixture password")));
+            assertEquals("Login page was blocked",before,state().transitions);
+            feedEvidence(site,"-login");
         }
     }
 }
