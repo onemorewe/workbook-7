@@ -1,9 +1,12 @@
 package dev.noshorts.chrome;
 
 import android.accessibilityservice.AccessibilityService;
+import android.accessibilityservice.GestureDescription;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
+import android.graphics.Path;
+import android.graphics.Rect;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -44,6 +47,9 @@ public final class ShortsService extends AccessibilityService implements SharedP
     private boolean youtubePage;
     private String feedSite;
     private long pendingBlockUntil;
+    private long revealAfter,revealUntil;
+    private boolean addressBarMissing;
+    private volatile int toolbarRequests,toolbarGestures;
     private final Runnable poll=()->{queued=false; scan();};
 
     @Override public void onServiceConnected() {
@@ -80,6 +86,18 @@ public final class ShortsService extends AccessibilityService implements SharedP
                 CharSequence target=node.getExtras().getCharSequence("AccessibilityNodeInfo.targetUrl");
                 if(target!=null && rules.evaluate(target.toString())==UrlRules.Verdict.BLOCK) return true;
                 if(PreviewMasks.isShortsAction(node,youtubePage)) return true;
+                if(feedSite!=null) {
+                    String role=String.valueOf(node.getExtras().getCharSequence("AccessibilityNodeInfo.chromeRole"));
+                    String label=((node.getContentDescription()==null?"":node.getContentDescription())+" "+
+                        (node.getText()==null?"":node.getText())).trim().toLowerCase(java.util.Locale.ROOT);
+                    boolean safeLink=target!=null && rules.evaluate(target.toString())==UrlRules.Verdict.ALLOW &&
+                        UrlRules.feedSite(target.toString())==null;
+                    boolean safeButton=(role.equals("button") || role.equals("tab") || role.equals("link")) &&
+                        label.matches("messages|messaging|direct|jobs|profile|your profile|my profile|you|сообщения|вакансии|профиль|ваш профиль|вы");
+                    if(safeLink || safeButton) {
+                        long now=SystemClock.elapsedRealtime(); revealAfter=now+250; revealUntil=now+4000; toolbarRequests++;
+                    }
+                }
                 AccessibilityNodeInfo parent=node.getParent(); node.recycle(); node=parent;
             }
             return false;
@@ -115,6 +133,10 @@ public final class ShortsService extends AccessibilityService implements SharedP
             root=chromeRoot();
             if(root==null) { removeCover(); previews.clear(); feeds.clear(); queue(250); return; }
             UrlRules.Verdict verdict=addressVerdict(root);
+            long revealNow=SystemClock.elapsedRealtime();
+            if(verdict==UrlRules.Verdict.UNKNOWN && addressBarMissing && revealNow>=revealAfter && revealNow<revealUntil) {
+                revealUntil=0; revealToolbar(root,0);
+            } else if(verdict!=UrlRules.Verdict.UNKNOWN && revealNow>=revealAfter) revealUntil=0;
             // A click is a navigation request. Keep it covered while Chrome still reports
             // the previous allowed page; the real URL or Guard takes over after this interval.
             if(SystemClock.elapsedRealtime()<pendingBlockUntil) verdict=UrlRules.Verdict.BLOCK;
@@ -145,6 +167,7 @@ public final class ShortsService extends AccessibilityService implements SharedP
     }
     private UrlRules.Verdict addressVerdict(AccessibilityNodeInfo root) {
         List<AccessibilityNodeInfo> nodes=root.findAccessibilityNodeInfosByViewId(CHROME+":id/url_bar");
+        addressBarMissing=nodes.isEmpty();
         try {
             for(AccessibilityNodeInfo n:nodes) {
                 // Don't block while someone is typing a not-yet-opened URL.
@@ -159,6 +182,26 @@ public final class ShortsService extends AccessibilityService implements SharedP
             }
             return documentVerdict(root,0);
         } finally { for(AccessibilityNodeInfo n:nodes) n.recycle(); }
+    }
+    private void revealToolbar(AccessibilityNodeInfo node,int depth) {
+        if(node==null || depth>30) return;
+        if("android.webkit.WebView".contentEquals(node.getClassName()==null?"":node.getClassName())) {
+            Rect r=new Rect();node.getBoundsInScreen(r);if(r.isEmpty()) return;
+            float delta=Math.min(48*getResources().getDisplayMetrics().density,r.height()/8f);
+            Path path=new Path();path.moveTo(r.centerX(),r.top+r.height()/3f);
+            path.lineTo(r.centerX(),r.top+r.height()/3f+delta);
+            // A short downward drag reveals Chrome controls without navigating Back.
+            // The feed stays covered until its actual native URL can be confirmed.
+            GestureDescription gesture=new GestureDescription.Builder().addStroke(
+                new GestureDescription.StrokeDescription(path,0,180)).build();
+            if(dispatchGesture(gesture,null,null)) toolbarGestures++;
+            return;
+        }
+        for(int i=0;i<node.getChildCount();i++) {
+            AccessibilityNodeInfo child=node.getChild(i);
+            try { revealToolbar(child,depth+1); }
+            finally { if(child!=null) child.recycle(); }
+        }
     }
     private UrlRules.Verdict documentVerdict(AccessibilityNodeInfo node,int depth) {
         if(node==null || depth>30) return UrlRules.Verdict.UNKNOWN;
@@ -218,7 +261,7 @@ public final class ShortsService extends AccessibilityService implements SharedP
     @Override protected void dump(FileDescriptor fd, PrintWriter writer, String[] args) {
         // System shell diagnostics only; no URL, page text or browsing history is exposed.
         writer.println("NoShorts connected="+connected+" transitions="+blockedTransitions+" cover="+coverVisible+
-            " masks="+previewCount+" feedMasks="+feedCount);
+            " masks="+previewCount+" feedMasks="+feedCount+" toolbarRequests="+toolbarRequests+" toolbarGestures="+toolbarGestures);
     }
     @Override public void onDestroy() {
         connected=false;
