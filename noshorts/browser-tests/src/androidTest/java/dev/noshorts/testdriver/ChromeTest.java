@@ -168,6 +168,15 @@ public class ChromeTest {
             } finally { shot.recycle(); }
         },5000,"Feed caption was not painted: "+site);
     }
+    private void dismissObservedChromeTip() {
+        BySelector tip=By.res("com.android.chrome","message").text(Pattern.compile("(?s)Get the best of Gemini.*"));
+        if(device.hasObject(tip)) {
+            // The observed first-launch Chrome bubble intercepts taps on the web header.
+            // Tap the fixture's inert middle area to close only this known browser tip.
+            device.click(device.getDisplayWidth()/2,device.getDisplayHeight()/2);
+            await(()->!device.hasObject(tip),5000,"Observed Chrome Gemini tip did not dismiss");
+        }
+    }
     private Rect corner(Rect r) { return new Rect(r.left+5,r.top+5,r.left+7,r.top+7); }
     private void feedEvidence(String site,String suffix) throws Exception {
         File dir=new File(app.getExternalFilesDir(null),"ci-evidence");dir.mkdirs();
@@ -462,6 +471,7 @@ public class ChromeTest {
             assertPainted(corner(search.getVisibleBounds()),Color.GREEN,"Feed search input was hidden");
             UiObject2 messages=visible(By.text("Messages"));assertNotNull(messages);
             assertPainted(corner(messages.getVisibleBounds()),Color.GREEN,"Bottom navigation was hidden");
+            dismissObservedChromeTip();
             feedEvidence(site,"");
             UiObject2 menu=visible(By.text("Fixture menu"));assertNotNull(menu);menu.click();
             UiObject2 panel=device.wait(Until.findObject(By.desc("Fixture options")),5000);
