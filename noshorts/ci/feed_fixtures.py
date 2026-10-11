@@ -31,7 +31,7 @@ article{{height:240px;background:#ff00ff;margin:12px;display:flex;align-items:ce
 function menu(){{let d=document.createElement('div');d.setAttribute('role','dialog');d.setAttribute('aria-label','Fixture options');
 d.innerHTML='<p>Fixture menu panel</p><button onclick="this.parentNode.remove()">Close menu</button>';document.body.append(d);}}
 function add(){{let p=document.createElement('article');p.textContent='Dynamic feed post';document.getElementById('feed').prepend(p);window.scrollTo(0,0);}}
-function safe(){{history.pushState({{}},'',{json.dumps(destination)});document.body.innerHTML='<h1 style="background:#00ff00;height:220px">Fixture safe destination</h1>';}}
+function safe(){{history.pushState({{}},'',{json.dumps(destination)});document.body.innerHTML='<h1 style="background:#00ff00;height:220px">Fixture safe destination</h1>';window.scrollTo(0,0);}}
 </script>'''
 
 class CDP:
