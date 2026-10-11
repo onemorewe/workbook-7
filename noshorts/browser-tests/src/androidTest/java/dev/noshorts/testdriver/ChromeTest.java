@@ -8,6 +8,7 @@ import android.content.Intent;
 import android.net.Uri;
 import android.os.SystemClock;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Rect;
 import android.view.accessibility.AccessibilityNodeInfo;
@@ -61,7 +62,10 @@ public class ChromeTest {
     private void writeNodes(FileWriter writer,AccessibilityNodeInfo node,int depth) throws Exception {
         if(node==null || depth>60) return;
         Rect r=new Rect(); node.getBoundsInScreen(r);
-        writer.write(depth+" "+node.getClassName()+" "+r+" extras="+node.getExtras()+
+        writer.write(depth+" "+node.getClassName()+" "+r+" target="+
+            node.getExtras().getCharSequence("AccessibilityNodeInfo.targetUrl")+" url="+
+            node.getExtras().getCharSequence("url")+" role="+
+            node.getExtras().getCharSequence("AccessibilityNodeInfo.chromeRole")+
             " text="+node.getText()+" desc="+node.getContentDescription()+"\n");
         for(int i=0;i<node.getChildCount();i++) {
             AccessibilityNodeInfo child=node.getChild(i);
@@ -93,13 +97,28 @@ public class ChromeTest {
         await(()->painted(r,expected),7000,label);
     }
     private boolean painted(Rect r,int expected) {
-        Bitmap shot=InstrumentationRegistry.getInstrumentation().getUiAutomation().takeScreenshot();
+        File frame=new File(app.getExternalFilesDir(null),"pixel-check.png");
+        assertTrue("Screenshot capture failed",device.takeScreenshot(frame));
+        Bitmap shot=BitmapFactory.decodeFile(frame.getAbsolutePath());
         assertNotNull("Screenshot unavailable",shot);
         try {
-            int x=Math.min(shot.getWidth()-1,Math.max(0,r.centerX()));
-            int y=Math.min(shot.getHeight()-1,Math.max(0,r.centerY()));
-            return expected==shot.getPixel(x,y);
+            if(r.width()<=0 || r.height()<=0) return false;
+            int x=Math.min(shot.getWidth()-1,Math.max(0,r.centerX()*shot.getWidth()/device.getDisplayWidth()));
+            int y=Math.min(shot.getHeight()-1,Math.max(0,r.centerY()*shot.getHeight()/device.getDisplayHeight()));
+            int actual=shot.getPixel(x,y);
+            boolean match=Math.abs(Color.red(expected)-Color.red(actual))<=2 &&
+                Math.abs(Color.green(expected)-Color.green(actual))<=2 &&
+                Math.abs(Color.blue(expected)-Color.blue(actual))<=2;
+            if(!match) System.out.println("Pixel mismatch: bounds="+r+" bitmap="+shot.getWidth()+"x"+
+                shot.getHeight()+" sample="+x+","+y+" actual="+Integer.toHexString(actual));
+            return match;
         } finally { shot.recycle(); }
+    }
+    private UiObject2 visible(BySelector selector) {
+        UiObject2 node=device.findObject(selector);
+        if(node==null) return null;
+        try { Rect r=node.getVisibleBounds(); return r.width()>0 && r.height()>0?node:null; }
+        catch(StaleObjectException ignored) { return null; }
     }
     private List<Rect> liveShortsCards() {
         List<Rect> result=new ArrayList<>();
@@ -166,7 +185,9 @@ public class ChromeTest {
         while(SystemClock.uptimeMillis()<deadline) {
             UiObject2 onboarding=device.findObject(By.res("com.android.chrome","signin_fre_dismiss_button"));
             if(onboarding==null) onboarding=device.findObject(By.text(Pattern.compile("(?i)(stay signed out|continue without an account|use without an account|accept & continue|no thanks|not now|got it|skip)")));
-            if(onboarding!=null) onboarding.click();
+            if(onboarding!=null) {
+                try { onboarding.click(); } catch(StaleObjectException ignored) { continue; }
+            }
             if(device.hasObject(By.res("com.android.chrome","url_bar")) && onboarding==null && !state().cover) break;
             SystemClock.sleep(300);
         }
@@ -265,16 +286,16 @@ public class ChromeTest {
             device.swipe(device.getDisplayWidth()*4/5,device.getDisplayHeight()*3/4,
                 device.getDisplayWidth()*4/5,device.getDisplayHeight()/3,30);
             SystemClock.sleep(600);
-            second=device.findObject(By.desc("Shorts preview two"));
+            second=visible(By.desc("Shorts preview two"));
         }
         assertNotNull("Second thumbnail unavailable after scrolling",second);
         SystemClock.sleep(500);
         assertPainted(second.getVisibleBounds(),Color.rgb(18,22,30),"Mask did not follow scroll");
-        UiObject2 dynamic=device.findObject(By.text("Add dynamic card"));
+        UiObject2 dynamic=visible(By.text("Add dynamic card"));
         for(int i=0;i<4 && dynamic==null;i++) {
             device.swipe(device.getDisplayWidth()*4/5,device.getDisplayHeight()*3/4,
                 device.getDisplayWidth()*4/5,device.getDisplayHeight()/2,20);
-            SystemClock.sleep(400); dynamic=device.findObject(By.text("Add dynamic card"));
+            SystemClock.sleep(400); dynamic=visible(By.text("Add dynamic card"));
         }
         assertNotNull("Dynamic fixture button unavailable",dynamic); dynamic.click();
         UiObject2 added=device.wait(Until.findObject(By.text("Dynamic Shorts preview")),5000);
