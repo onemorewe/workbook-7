@@ -6,7 +6,7 @@ import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Handler;
-import android.os.Looper;
+import android.os.HandlerThread;
 import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.View;
@@ -30,9 +30,11 @@ public final class ShortsService extends AccessibilityService implements SharedP
     public static volatile int blockedTransitions;
     public static volatile boolean coverVisible;
     private static final String CHROME="com.android.chrome";
-    private final Handler handler=new Handler(Looper.getMainLooper());
+    private final HandlerThread scanner=new HandlerThread("NoShorts browser");
+    private Handler handler;
+    private volatile int previewCount,feedCount;
     private final Guard guard=new Guard();
-    private UrlRules rules=new UrlRules("");
+    private volatile UrlRules rules=new UrlRules("");
     private View cover;
     private boolean queued;
     private long lastBack;
@@ -45,6 +47,7 @@ public final class ShortsService extends AccessibilityService implements SharedP
     private final Runnable poll=()->{queued=false; scan();};
 
     @Override public void onServiceConnected() {
+        if(handler==null) { scanner.start(); handler=new Handler(scanner.getLooper()); }
         connected=true;
         previews=new PreviewMasks(this);
         feeds=new FeedMasks(this);
@@ -59,9 +62,14 @@ public final class ShortsService extends AccessibilityService implements SharedP
     }
     @Override public void onAccessibilityEvent(AccessibilityEvent event) {
         if(event!=null && CHROME.contentEquals(event.getPackageName()==null ? "" : event.getPackageName())) {
-            if(event.getEventType()==AccessibilityEvent.TYPE_VIEW_CLICKED && blockedClick(event))
-                pendingBlockUntil=SystemClock.elapsedRealtime()+900;
-            queue(0);
+            if(event.getEventType()==AccessibilityEvent.TYPE_VIEW_CLICKED) {
+                AccessibilityEvent copy=AccessibilityEvent.obtain(event);
+                handler.post(()->{
+                    try { if(connected && blockedClick(copy)) pendingBlockUntil=SystemClock.elapsedRealtime()+900; }
+                    finally { copy.recycle(); }
+                    queue(0);
+                });
+            } else queue(0);
         }
     }
     private boolean blockedClick(AccessibilityEvent event) {
@@ -78,8 +86,12 @@ public final class ShortsService extends AccessibilityService implements SharedP
         } finally { if(node!=null) node.recycle(); }
     }
     private void queue(long delay) {
-        if(queued && delay==0) { handler.removeCallbacks(poll); queued=false; }
-        if(!queued) { queued=true; handler.postDelayed(poll,delay); }
+        if(handler==null || !connected) return;
+        handler.post(()->{
+            if(!connected) return;
+            if(queued && delay==0) { handler.removeCallbacks(poll); queued=false; }
+            if(!queued) { queued=true; handler.postDelayed(poll,delay); }
+        });
     }
     private AccessibilityNodeInfo chromeRoot() {
         // A non-focusable accessibility overlay must not become the inspected application.
@@ -97,6 +109,7 @@ public final class ShortsService extends AccessibilityService implements SharedP
         return null;
     }
     private void scan() {
+        if(!connected) return;
         AccessibilityNodeInfo root=null;
         try {
             root=chromeRoot();
@@ -125,7 +138,10 @@ public final class ShortsService extends AccessibilityService implements SharedP
         } catch(RuntimeException ex) {
             // Tree/window can disappear mid-read; preserve the guard decision and retry.
             queue(250);
-        } finally { if(root!=null) root.recycle(); }
+        } finally {
+            if(root!=null) root.recycle();
+            previewCount=previews.count(); feedCount=feeds.count();
+        }
     }
     private UrlRules.Verdict addressVerdict(AccessibilityNodeInfo root) {
         List<AccessibilityNodeInfo> nodes=root.findAccessibilityNodeInfosByViewId(CHROME+":id/url_bar");
@@ -193,16 +209,27 @@ public final class ShortsService extends AccessibilityService implements SharedP
         cover=null;
         coverVisible=false;
     }
-    @Override public void onInterrupt() { removeCover(); if(previews!=null) previews.clear(); if(feeds!=null) feeds.clear(); }
+    @Override public void onInterrupt() {
+        if(handler!=null) handler.post(()->{
+            removeCover(); if(previews!=null) previews.clear(); if(feeds!=null) feeds.clear();
+            previewCount=0; feedCount=0;
+        });
+    }
     @Override protected void dump(FileDescriptor fd, PrintWriter writer, String[] args) {
         // System shell diagnostics only; no URL, page text or browsing history is exposed.
         writer.println("NoShorts connected="+connected+" transitions="+blockedTransitions+" cover="+coverVisible+
-            " masks="+(previews==null?0:previews.count())+" feedMasks="+(feeds==null?0:feeds.count()));
+            " masks="+previewCount+" feedMasks="+feedCount);
     }
     @Override public void onDestroy() {
-        connected=false; handler.removeCallbacksAndMessages(null); queued=false; removeCover();
-        if(previews!=null) previews.clear();
-        if(feeds!=null) feeds.clear();
+        connected=false;
+        if(handler!=null) {
+            handler.removeCallbacksAndMessages(null);
+            handler.post(()->{
+                queued=false; removeCover();
+                if(previews!=null) previews.clear(); if(feeds!=null) feeds.clear();
+                previewCount=0; feedCount=0; scanner.quitSafely();
+            });
+        }
         if(preferences!=null) preferences.unregisterOnSharedPreferenceChangeListener(this);
         super.onDestroy();
     }

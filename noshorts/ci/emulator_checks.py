@@ -10,8 +10,17 @@ def adb(*args):
     return subprocess.check_output(['adb', *args], text=True).strip()
 
 def hierarchy():
-    adb('shell', 'uiautomator', 'dump', '/sdcard/noshorts-ui.xml')
-    return ET.fromstring(adb('shell', 'cat', '/sdcard/noshorts-ui.xml'))
+    for attempt in range(6):
+        adb('shell', 'rm', '-f', '/sdcard/noshorts-ui.xml')
+        result = subprocess.run(['adb', 'shell', 'uiautomator', 'dump', '/sdcard/noshorts-ui.xml'],
+                                capture_output=True, text=True, timeout=20)
+        output = result.stdout + result.stderr
+        if 'null root node' in output:
+            time.sleep(.5)
+            continue
+        assert result.returncode == 0, 'UI hierarchy failed: ' + output
+        return ET.fromstring(adb('shell', 'cat', '/sdcard/noshorts-ui.xml'))
+    raise AssertionError('Cold emulator UI returned null root for all six attempts')
 
 def find_id(name):
     for _ in range(12):

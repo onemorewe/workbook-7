@@ -2,7 +2,7 @@
     android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeViewScrolled|typeViewTextChanged|typeWindowsChanged|typeViewClicked"
     android:packageNames="com.android.chrome"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows"
+    android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows|flagIncludeNotImportantViews"
     android:notificationTimeout="80"
     android:canRetrieveWindowContent="true"
     android:description="@string/service_description"
