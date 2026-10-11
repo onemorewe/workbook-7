@@ -16,6 +16,20 @@ def hierarchy():
 def find_id(name):
     for _ in range(12):
         tree = hierarchy()
+        # A cold SDK boot can leave Pixel Launcher's own ANR dialog above
+        # the app. Dismiss only this observed system fixture failure; ANRs
+        # from NoShorts, Chrome or any other app must still fail the check.
+        titles = [n.get('text', '') for n in tree.iter('node')
+                  if n.get('resource-id') == 'android:id/alertTitle']
+        if titles == ["Pixel Launcher isn't responding"]:
+            close = next((n for n in tree.iter('node')
+                          if n.get('resource-id') == 'android:id/aerr_close'), None)
+            assert close is not None, 'Pixel Launcher ANR has no Close app action'
+            (RESULTS/'launcher-anr.xml').write_text(ET.tostring(tree, encoding='unicode'))
+            tap(close)
+            adb('shell', 'am', 'start', '-W', '-n', PACKAGE+'/.MainActivity')
+            time.sleep(1)
+            continue
         for node in tree.iter('node'):
             if node.get('resource-id') == PACKAGE + ':id/' + name:
                 return node
