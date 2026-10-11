@@ -22,6 +22,7 @@ import java.io.FileDescriptor;
 import java.io.PrintWriter;
 import dev.noshorts.core.Guard;
 import dev.noshorts.core.UrlRules;
+import dev.noshorts.core.ChromeAddress;
 
 /** Reads only Chrome's address bar. Page titles, links and labels are never used as evidence. */
 public final class ShortsService extends AccessibilityService implements SharedPreferences.OnSharedPreferenceChangeListener {
@@ -97,9 +98,9 @@ public final class ShortsService extends AccessibilityService implements SharedP
         try {
             for(AccessibilityNodeInfo n:nodes) {
                 // Don't block while someone is typing a not-yet-opened URL.
-                if(!n.isVisibleToUser() || (n.isEditable() && n.isFocused())) continue;
+                if(n.isEditable() && n.isFocused()) continue;
                 CharSequence text=n.getText();
-                UrlRules.Verdict verdict=rules.evaluate(text==null ? null : text.toString());
+                UrlRules.Verdict verdict=rules.evaluate(ChromeAddress.fromNodeText(text==null ? null : text.toString()));
                 if(verdict!=UrlRules.Verdict.UNKNOWN) return verdict;
             }
             return UrlRules.Verdict.UNKNOWN;

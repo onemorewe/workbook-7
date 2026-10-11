@@ -20,6 +20,7 @@ collect_evidence() {
 trap collect_evidence EXIT
 if [[ -n "${CHROME_APK_URL:-}" || -f ci/chrome-download-url.txt ]]; then
     python3 ci/update_chrome.py
+    if [[ -n "${GITHUB_ENV:-}" ]]; then echo 'NOSHORTS_CHROME_VERIFIED=true' >> "$GITHUB_ENV"; fi
 fi
 python3 ci/emulator_checks.py
 gradle --no-daemon :browser-tests:connectedDebugAndroidTest --stacktrace

@@ -46,6 +46,18 @@ public final class CoreTest {
         g.observe(UrlRules.Verdict.BLOCK); g.openSafeHome();
         check(!g.isBlocked(),"Fixed safe home must clear stale latch");
         check(g.observe(UrlRules.Verdict.BLOCK),"A redirect back to Shorts must re-block");
+        UrlRules http=new UrlRules("127.0.0.1/shorts");
+        expect(http,ChromeAddress.fromNodeText("127.0.0.1:8765/shorts/test. Connection is not secure"),UrlRules.Verdict.BLOCK);
+        expect(http,ChromeAddress.fromNodeText("127.0.0.1:8765/safe. Connection is not secure"),UrlRules.Verdict.ALLOW);
+        expect(http,ChromeAddress.fromNodeText("127.0.0.1:8765/shorts/test. Соединение не защищено"),UrlRules.Verdict.BLOCK);
+        expect(r,ChromeAddress.fromNodeText("youtube.com/shorts/a. Connection is not secure"),UrlRules.Verdict.BLOCK);
+        expect(r,ChromeAddress.fromNodeText("youtube.com/watch?v=shorts. Connection is not secure"),UrlRules.Verdict.ALLOW);
+        expect(r,ChromeAddress.fromNodeText("youtube.com.evil.example/shorts/a. Connection is not secure"),UrlRules.Verdict.ALLOW);
+        expect(r,ChromeAddress.fromNodeText("youtube.com/shorts.. Connection is not secure"),UrlRules.Verdict.ALLOW);
+        expect(r,ChromeAddress.fromNodeText("youtube.com/shorts.%20ordinary. Connection is not secure"),UrlRules.Verdict.ALLOW);
+        expect(r,ChromeAddress.fromNodeText("YouTube Shorts. Connection is not secure"),UrlRules.Verdict.UNKNOWN);
+        expect(r,ChromeAddress.fromNodeText("www.youtube.com /shorts/a"),UrlRules.Verdict.UNKNOWN);
+        expect(r,ChromeAddress.fromNodeText(null),UrlRules.Verdict.UNKNOWN);
         System.out.println("PASS: "+checks+" URL and guard regression checks");
     }
 }

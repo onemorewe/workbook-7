@@ -27,6 +27,9 @@ class Links(HTMLParser):
             self.links.append(dict(attrs))
 
 def download():
+    if APK.exists() and hashlib.sha256(APK.read_bytes()).hexdigest() == '47ab1990446ec45fdb2078b0c443a1e66aaea011f72705bdbf854ed0ffecde3f':
+        print('Using exact verified Chrome 154 package from CI cache', flush=True)
+        return
     client = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
     def fetch(url, referer=PAGE):
         return client.open(urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0', 'Referer': referer}), timeout=30)
@@ -45,19 +48,30 @@ def download():
         with fetch(landing) as response:
             links = Links(); links.feed(response.read().decode())
         entry = next(a['href'] for a in links.links if '/wp-content/themes/APKMirror/download.php' in a.get('href', ''))
-    with fetch(urllib.parse.urljoin(PAGE, entry), landing) as response, APK.open('wb') as output:
-        size = 0
-        while True:
-            chunk = response.read(1024 * 1024)
-            if not chunk:
-                break
-            size += len(chunk)
-            assert size < 500 * 1024 * 1024, 'Unexpected Chrome package size'
-            output.write(chunk)
-    with zipfile.ZipFile(APK) as archive:
-        assert 'AndroidManifest.xml' in archive.namelist(), 'Download is not an APK'
-        assert any(n.startswith('lib/x86_64/') for n in archive.namelist()), 'Chrome APK lacks x86_64 native code'
-    print('Downloaded Chrome', VERSION, 'bytes', APK.stat().st_size, flush=True)
+    entries = [urllib.parse.urljoin(PAGE, entry)]
+    if override and 'www.apkmirror.com/wp-content/themes/APKMirror/download.php' in override:
+        entries.append("https://downloadr2.apkmirror.com/wp-content/uploads/2026/10/78/6ac3f87e1ddd1/com.android.chrome_154.0.8037.126-803712608_minAPI29%28x86_64%29%28nodpi%29_apkmirror.com.apk")
+    last_error = None
+    for entry in entries:
+        try:
+            with fetch(entry, landing) as response, APK.open('wb') as output:
+                size = 0
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    assert size < 500 * 1024 * 1024, 'Unexpected Chrome package size'
+                    output.write(chunk)
+            with zipfile.ZipFile(APK) as archive:
+                assert 'AndroidManifest.xml' in archive.namelist(), 'Download is not an APK'
+                assert any(n.startswith('lib/x86_64/') for n in archive.namelist()), 'Chrome APK lacks x86_64 native code'
+            print('Downloaded Chrome', VERSION, 'bytes', APK.stat().st_size, flush=True)
+            return
+        except Exception as error:
+            last_error = type(error).__name__
+            print('Public Chrome transfer failed:', last_error, getattr(error, 'code', ''), flush=True)
+    raise RuntimeError('No Chrome package obtained: ' + str(last_error))
 
 def command(*args):
     return subprocess.check_output(args, text=True, timeout=60)

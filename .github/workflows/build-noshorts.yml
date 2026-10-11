@@ -65,6 +65,11 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+      - uses: actions/cache/restore@v4
+        continue-on-error: true
+        with:
+          path: noshorts/.ci-cache/chrome154.apk
+          key: noshorts-chrome154-47ab1990446ec45fdb2078b0c443a1e66aaea011f72705bdbf854ed0ffecde3f
       - name: Verify signed update and Chrome on Android emulator
         uses: reactivecircus/android-emulator-runner@v2
         env:
@@ -80,6 +85,20 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot-save -memory 4096
           script: cd noshorts && bash ci/run_emulator.sh
+      - uses: actions/cache/save@v4
+        if: always() && env.NOSHORTS_CHROME_VERIFIED == 'true'
+        continue-on-error: true
+        with:
+          path: noshorts/.ci-cache/chrome154.apk
+          key: noshorts-chrome154-47ab1990446ec45fdb2078b0c443a1e66aaea011f72705bdbf854ed0ffecde3f
+      - name: Encode verified APK for repository delivery
+        run: |
+          echo NOSHORTS_APK_BASE64_BEGIN
+          base64 -w 0 app/build/outputs/apk/release/app-release.apk
+          echo
+          echo NOSHORTS_APK_BASE64_END
+          echo "NOSHORTS_APK_GIT_BLOB=$(git hash-object app/build/outputs/apk/release/app-release.apk)"
+          sha256sum app/build/outputs/apk/release/app-release.apk
       - name: Upload verification results
         if: always()
         uses: actions/upload-artifact@v4
