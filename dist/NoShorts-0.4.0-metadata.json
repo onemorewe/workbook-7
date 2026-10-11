@@ -1,0 +1,9 @@
+{
+  "apkSHA256": "8742d3a00e402ee50f3a944ef82921a896d42b6c78891670ee7f88b677b2a75a",
+  "apkSize": 22188,
+  "zipSHA256": "2a65ad3399c4c1778b4e659e8501db9f383845166a1cfbc2d4f7e89a5c5ff1de",
+  "zipSize": 19239,
+  "warnings": 5,
+  "versionCode": 100044,
+  "versionName": "0.4.0"
+}
