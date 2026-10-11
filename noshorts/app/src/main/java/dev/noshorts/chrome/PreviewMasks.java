@@ -27,6 +27,11 @@ final class PreviewMasks {
         windows=(WindowManager)context.getSystemService(Context.WINDOW_SERVICE);
     }
     int count() { return views.size(); }
+    static boolean isShortsAction(AccessibilityNodeInfo node,boolean youtube) {
+        CharSequence description=node.getContentDescription();
+        return youtube && description!=null && description.toString().matches(
+            "(?s).+ - (play Short|воспроизвести Short|воспроизвести Shorts|смотреть Shorts)( New| Новинка)?$");
+    }
     void update(AccessibilityNodeInfo root,boolean youtube) {
         remaining=1400;
         List<Rect> regions=new ArrayList<>();
@@ -91,9 +96,7 @@ final class PreviewMasks {
         }
         // YouTube also renders JavaScript navigation controls without href/targetUrl.
         // Its accessibility label supplies an explicit action suffix, not a title keyword.
-        CharSequence description=node.getContentDescription();
-        boolean action=youtube && description!=null && description.toString().matches(
-            "(?s).+ - (play Short|воспроизвести Short|воспроизвести Shorts|смотреть Shorts)( New| Новинка)?$");
+        boolean action=isShortsAction(node,youtube);
         if(action) { s.shorts=true; s.distance=0; }
         for(int i=0;i<node.getChildCount();i++) {
             AccessibilityNodeInfo child=node.getChild(i);

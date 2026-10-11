@@ -39,6 +39,7 @@ public final class ShortsService extends AccessibilityService implements SharedP
     private SharedPreferences preferences;
     private PreviewMasks previews;
     private boolean youtubePage;
+    private long pendingBlockUntil;
     private final Runnable poll=()->{queued=false; scan();};
 
     @Override public void onServiceConnected() {
@@ -54,7 +55,24 @@ public final class ShortsService extends AccessibilityService implements SharedP
         catch(IllegalArgumentException ex) { rules=new UrlRules(""); }
     }
     @Override public void onAccessibilityEvent(AccessibilityEvent event) {
-        if(event!=null && CHROME.contentEquals(event.getPackageName()==null ? "" : event.getPackageName())) queue(0);
+        if(event!=null && CHROME.contentEquals(event.getPackageName()==null ? "" : event.getPackageName())) {
+            if(event.getEventType()==AccessibilityEvent.TYPE_VIEW_CLICKED && blockedClick(event))
+                pendingBlockUntil=SystemClock.elapsedRealtime()+900;
+            queue(0);
+        }
+    }
+    private boolean blockedClick(AccessibilityEvent event) {
+        AccessibilityNodeInfo node=event.getSource();
+        try {
+            for(int depth=0;node!=null && depth<4;depth++) {
+                if("android.webkit.WebView".contentEquals(node.getClassName()==null?"":node.getClassName())) break;
+                CharSequence target=node.getExtras().getCharSequence("AccessibilityNodeInfo.targetUrl");
+                if(target!=null && rules.evaluate(target.toString())==UrlRules.Verdict.BLOCK) return true;
+                if(PreviewMasks.isShortsAction(node,youtubePage)) return true;
+                AccessibilityNodeInfo parent=node.getParent(); node.recycle(); node=parent;
+            }
+            return false;
+        } finally { if(node!=null) node.recycle(); }
     }
     private void queue(long delay) {
         if(queued && delay==0) { handler.removeCallbacks(poll); queued=false; }
@@ -81,6 +99,9 @@ public final class ShortsService extends AccessibilityService implements SharedP
             root=chromeRoot();
             if(root==null) { removeCover(); previews.clear(); queue(250); return; }
             UrlRules.Verdict verdict=addressVerdict(root);
+            // A click is a navigation request. Keep it covered while Chrome still reports
+            // the previous allowed page; the real URL or Guard takes over after this interval.
+            if(SystemClock.elapsedRealtime()<pendingBlockUntil) verdict=UrlRules.Verdict.BLOCK;
             boolean wasBlocked=guard.isBlocked();
             boolean blocked=guard.observe(verdict);
             if(blocked && !wasBlocked) blockedTransitions++;

@@ -1,9 +1,9 @@
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 HTML = b'''<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Chrome navigation test</title><style>body{min-height:300vh}button{position:fixed;bottom:40px;left:16px;font-size:24px;padding:24px}</style>
+<title>Chrome navigation test</title><style>body{min-height:300vh}a{position:fixed;bottom:40px;left:16px;font-size:24px;padding:24px;background:#ddd;color:#000}</style>
 <h1>Allowed page</h1><p>The word Shorts alone must not block this page.</p>
-<button onclick="history.pushState({},'', '/shorts/test');document.querySelector('h1').textContent='Blocked route';">Open Shorts route</button>'''
+<a href="/shorts/test" onclick="history.pushState({},'', '/shorts/test');document.querySelector('h1').textContent='Blocked route';return false;">Open Shorts route</a>'''
 
 PREVIEWS = b'''<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Preview masking test</title>
