@@ -18,7 +18,7 @@ collect_evidence() {
     return "$result"
 }
 trap collect_evidence EXIT
-if [[ -n "${CHROME_APK_URL:-}" || -f ci/chrome-download-url.txt ]]; then
+if [[ -n "${CHROME_APK_URL:-}" || -f .ci-cache/chrome154.apk ]]; then
     python3 ci/update_chrome.py
     if [[ -n "${GITHUB_ENV:-}" ]]; then echo 'NOSHORTS_CHROME_VERIFIED=true' >> "$GITHUB_ENV"; fi
 fi

@@ -91,14 +91,6 @@ jobs:
         with:
           path: noshorts/.ci-cache/chrome154.apk
           key: noshorts-chrome154-47ab1990446ec45fdb2078b0c443a1e66aaea011f72705bdbf854ed0ffecde3f
-      - name: Encode verified APK for repository delivery
-        run: |
-          echo NOSHORTS_APK_BASE64_BEGIN
-          base64 -w 0 app/build/outputs/apk/release/app-release.apk
-          echo
-          echo NOSHORTS_APK_BASE64_END
-          echo "NOSHORTS_APK_GIT_BLOB=$(git hash-object app/build/outputs/apk/release/app-release.apk)"
-          sha256sum app/build/outputs/apk/release/app-release.apk
       - name: Upload verification results
         if: always()
         uses: actions/upload-artifact@v4

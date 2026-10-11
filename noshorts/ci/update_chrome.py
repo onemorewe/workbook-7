@@ -34,9 +34,6 @@ def download():
     def fetch(url, referer=PAGE):
         return client.open(urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0', 'Referer': referer}), timeout=30)
     override = os.environ.get('CHROME_APK_URL', '').strip()
-    transfer = ROOT / 'ci/chrome-download-url.txt'
-    if not override and transfer.exists():
-        override = transfer.read_text().strip()
     if override:
         assert override.startswith('https://'), 'Chrome transfer URL must use HTTPS'
         entry, landing = override, PAGE
