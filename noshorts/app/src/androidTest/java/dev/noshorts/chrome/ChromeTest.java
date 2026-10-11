@@ -14,6 +14,7 @@ import org.junit.runner.RunWith;
 import org.junit.runners.MethodSorters;
 import java.io.File;
 import java.util.function.BooleanSupplier;
+import java.util.regex.Pattern;
 import static org.junit.Assert.*;
 
 @RunWith(AndroidJUnit4.class)
@@ -58,7 +59,7 @@ public class ChromeTest {
         while(SystemClock.uptimeMillis()<deadline) {
             UiObject2 safe=device.findObject(By.text("Открыть обычный YouTube"));
             if(safe!=null) safe.click();
-            UiObject2 onboarding=device.findObject(By.textMatches("(?i)(use without an account|accept & continue|no thanks|got it|skip)"));
+            UiObject2 onboarding=device.findObject(By.text(Pattern.compile("(?i)(use without an account|accept & continue|no thanks|got it|skip)")));
             if(onboarding!=null) onboarding.click();
             if(device.hasObject(By.res("com.android.chrome","url_bar")) && onboarding==null && !ShortsService.coverVisible) break;
             SystemClock.sleep(300);

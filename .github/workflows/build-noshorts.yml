@@ -10,19 +10,6 @@ permissions:
   contents: read
 
 jobs:
-  stop-stalled-verification:
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    permissions:
-      actions: write
-    steps:
-      - uses: actions/github-script@v7
-        with:
-          script: |
-            const {data: run} = await github.rest.actions.getWorkflowRun({owner: context.repo.owner, repo: context.repo.repo, run_id: 38110229137});
-            if (run.head_branch === 'noshorts/android-verification' && run.status === 'in_progress') {
-              await github.rest.actions.cancelWorkflowRun({owner: context.repo.owner, repo: context.repo.repo, run_id: run.id});
-            }
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 35
