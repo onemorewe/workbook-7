@@ -2,6 +2,7 @@ plugins { id 'com.android.application' }
 android {
     namespace 'dev.noshorts.chrome'
     compileSdk 35
+    testBuildType 'release'
     defaultConfig {
         applicationId 'dev.noshorts.chrome'; minSdk 26; targetSdk 35
         versionCode Integer.parseInt(System.getenv('NOSHORTS_VERSION_CODE') ?: '2')

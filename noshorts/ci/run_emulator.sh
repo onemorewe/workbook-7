@@ -16,5 +16,6 @@ collect_evidence() {
     return "$result"
 }
 trap collect_evidence EXIT
+python3 ci/update_chrome.py
 python3 ci/emulator_checks.py
-gradle --no-daemon :app:connectedDebugAndroidTest --stacktrace
+gradle --no-daemon :app:connectedReleaseAndroidTest --stacktrace

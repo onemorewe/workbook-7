@@ -50,9 +50,9 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          NOSHORTS_VERSION_CODE=$((NOSHORTS_VERSION_CODE - 1)) gradle --no-daemon :core:verifyRules :app:lintDebug :app:assembleRelease --stacktrace
+          NOSHORTS_VERSION_CODE=$((NOSHORTS_VERSION_CODE - 1)) gradle --no-daemon :core:verifyRules :app:lintRelease :app:assembleRelease --stacktrace
           cp app/build/outputs/apk/release/app-release.apk ci-results/NoShorts-previous.apk
-          gradle --no-daemon :app:assembleRelease :app:assembleDebugAndroidTest --stacktrace
+          gradle --no-daemon :app:assembleRelease :app:assembleReleaseAndroidTest --stacktrace
           bash ci/signature_check.sh
       - name: Enable KVM
         working-directory: .
