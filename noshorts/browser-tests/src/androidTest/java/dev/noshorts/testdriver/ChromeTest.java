@@ -44,6 +44,9 @@ public class ChromeTest {
         try(FileWriter writer=new FileWriter(new File(dir,"service-"+suffix+".txt"))) {
             writer.write(serviceDump());
         }
+        // Gradle uninstalls this driver after instrumentation; keep evidence outside its data.
+        device.executeShellCommand("mkdir -p /sdcard/Download/noshorts-ci");
+        device.executeShellCommand("cp -R "+dir.getAbsolutePath()+"/. /sdcard/Download/noshorts-ci/");
     }
     private static final String BLOCKER="dev.noshorts.chrome";
     private static final class ServiceState {
@@ -100,7 +103,8 @@ public class ChromeTest {
         while(SystemClock.uptimeMillis()<deadline) {
             UiObject2 safe=device.findObject(By.text("Открыть обычный YouTube"));
             if(safe!=null) safe.click();
-            UiObject2 onboarding=device.findObject(By.text(Pattern.compile("(?i)(use without an account|accept & continue|no thanks|got it|skip)")));
+            UiObject2 onboarding=device.findObject(By.res("com.android.chrome","signin_fre_dismiss_button"));
+            if(onboarding==null) onboarding=device.findObject(By.text(Pattern.compile("(?i)(stay signed out|continue without an account|use without an account|accept & continue|no thanks|not now|got it|skip)")));
             if(onboarding!=null) onboarding.click();
             if(device.hasObject(By.res("com.android.chrome","url_bar")) && onboarding==null && !state().cover) break;
             SystemClock.sleep(300);
