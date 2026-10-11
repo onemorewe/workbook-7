@@ -35,7 +35,9 @@ def wait_bound(phase):
         (RESULTS/(phase+'-accessibility.txt')).write_text(state)
         (RESULTS/(phase+'-enabled.txt')).write_text(enabled+'\n')
         bound = re.search(r'(?:boundServices|Bound services):\s*\{(.*?)\}', state, re.S | re.I)
-        if bound and PACKAGE in bound.group(1):
+        # Android 15 dumps bound services by their manifest label, not component ID.
+        # The fixture has a single installed NoShorts service with this exact label.
+        if bound and 'Service[label=NoShorts — Chrome,' in bound.group(1):
             assert COMPONENT in enabled, 'Bound service is absent from enabled settings: '+phase
             return
         assert time.monotonic() < deadline, 'Accessibility service did not bind: '+phase+'; enabled='+enabled
