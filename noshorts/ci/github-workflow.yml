@@ -55,8 +55,8 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          curl --fail --location --retry 3 'https://raw.githubusercontent.com/onemorewe/workbook-7/6005f320550113f4965886aa3ca3d1f9ff02fdbc/dist/NoShorts-0.4.0.apk' -o ci-results/NoShorts-previous.apk
-          echo '8742d3a00e402ee50f3a944ef82921a896d42b6c78891670ee7f88b677b2a75a  ci-results/NoShorts-previous.apk' | sha256sum -c -
+          curl --fail --location --retry 3 'https://raw.githubusercontent.com/onemorewe/workbook-7/fc0ebcef233deb430a8a7b49985c747b9aab72b5/dist/NoShorts-0.5.0.apk' -o ci-results/NoShorts-previous.apk
+          echo '5d42a2efeb3ef25df6c74fb5c584d1b255be6562aff3ccc4c861ed5f1f25d154  ci-results/NoShorts-previous.apk' | sha256sum -c -
           gradle --no-daemon :core:verifyRules :app:lintRelease :app:assembleRelease :browser-tests:assembleDebug :browser-tests:assembleDebugAndroidTest --stacktrace
           bash ci/signature_check.sh
       - name: Enable KVM

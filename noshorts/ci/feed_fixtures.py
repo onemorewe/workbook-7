@@ -7,7 +7,7 @@ SITES = {
     'LinkedIn': ('https://www.linkedin.com/feed/', '/messaging/'),
 }
 
-def html(site, login=False):
+def html(site, login=False, compact=False):
     if login:
         return '''<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Login feed fixture</title><h1 style="height:160px;background:#00ff00">Fixture sign-in</h1>
@@ -15,7 +15,7 @@ def html(site, login=False):
     destination = SITES[site][1]
     # YouTube deliberately has no main/feed landmark or semantic bottom nav: fallback layout.
     start, end = ('<div id="feed">', '</div>') if site == 'YouTube' else ('<main id="feed" role="feed">', '</main>')
-    return f'''<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
+    document=f'''<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{site} feed fixture</title><style>
 body{{margin:0;font:16px sans-serif;background:white;min-height:300vh}}
 header,footer{{position:fixed;left:0;right:0;height:64px;background:#00ff00;display:flex;align-items:center;justify-content:space-around;z-index:5}}
@@ -29,10 +29,26 @@ article{{height:240px;background:#ff00ff;margin:12px;display:flex;align-items:ce
 <footer><button onclick="window.scrollTo(0,0)">Home</button><button onclick="safe()">Messages</button><button>Profile</button></footer>
 <script>
 function menu(){{let d=document.createElement('div');d.setAttribute('role','dialog');d.setAttribute('aria-label','Fixture options');
-d.innerHTML='<p>Fixture menu panel</p><button onclick="this.parentNode.remove()">Close menu</button>';document.body.append(d);}}
+d.innerHTML='<p>Fixture menu panel</p><button onclick="window.scrollBy(0,innerHeight/2)">Scroll feed</button><button onclick="this.parentNode.remove()">Close menu</button>';document.body.append(d);}}
 function add(){{let p=document.createElement('article');p.textContent='Dynamic feed post';document.getElementById('feed').prepend(p);window.scrollTo(0,0);}}
 function safe(){{history.pushState({{}},'',{json.dumps(destination)});document.body.innerHTML='<h1 style="background:#00ff00;height:220px">Fixture safe destination</h1>';window.scrollTo(0,0);}}
 </script>'''
+    if compact:
+        # A short accessibility landmark does not delimit every mounted feed card.
+        # Saturated content makes even a small uncovered strip observable in screenshots.
+        document=document.replace('background:white;', 'background:#ff00ff;')
+        document=document.replace('padding-bottom:80px;min-height:300vh', 'padding-bottom:0;min-height:0')
+        document=document.replace(f'<div class="spacer"></div><article>Fixture feed post two</article>{end}',
+            f'{end}<article>Fixture feed post two</article><div class="spacer"></div>')
+        document=document.replace('height:240px;', 'height:90px;')
+        document=document.replace('<article>Fixture feed post one</article>',
+            '<article>Fixture feed post one</article><span id="tapCount">Fixture feed taps: 0</span>')
+        document=document.replace('</script>', '''let taps=0;document.addEventListener('click',event=>{
+if(event.target.closest('article'))document.getElementById('tapCount').textContent='Fixture feed taps: '+(++taps);});</script>''')
+        if site=='LinkedIn':
+            begin=document.index('<footer>');finish=document.index('</footer>',begin)+len('</footer>')
+            document=document[:begin]+document[finish:]
+    return document
 
 class CDP:
     """Small standard-library WebSocket client; CDP commands are confined to the CI tab."""
@@ -92,12 +108,12 @@ class CDP:
     def close(self):
         self.reader.close();self.sock.close()
 
-def inject(site, login=False):
+def inject(site, login=False, compact=False):
     assert site in SITES,'Unknown fixture site'
     subprocess.run(['adb','forward','tcp:9222','localabstract:chrome_devtools_remote'],check=True,timeout=10)
     pages=json.load(urllib.request.urlopen('http://127.0.0.1:9222/json',timeout=10))
     page=next(p for p in pages if p.get('type')=='page' and '/feed-fixture-start' in p.get('url',''))
-    cdp=CDP(page['webSocketDebuggerUrl'],html(site,login))
+    cdp=CDP(page['webSocketDebuggerUrl'],html(site,login,compact))
     try:
         cdp.call('Page.enable');cdp.call('Fetch.enable',{'patterns':[{'urlPattern':'*','requestStage':'Request'}]})
         result=cdp.call('Page.navigate',{'url':SITES[site][0]})

@@ -8,25 +8,30 @@ import android.view.View;
 import android.view.WindowManager;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.TextView;
+import android.widget.Button;
+import android.widget.LinearLayout;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.function.Consumer;
 
 /** Hides a feed's content without navigating away or covering the browser toolbar. */
 final class FeedMasks {
     private static final String ROLE="AccessibilityNodeInfo.chromeRole";
     private final Context context;
     private final WindowManager windows;
-    private final List<TextView> views=new ArrayList<>();
+    private final List<MaskPanel> views=new ArrayList<>();
+    private final Consumer<String> openSafe;
     private List<Rect> current=new ArrayList<>();
     private String activeSite,caption="";
     private final Map<String,Integer> visits=new HashMap<>();
     private int remaining;
 
-    FeedMasks(Context context) {
+    FeedMasks(Context context,Consumer<String> openSafe) {
         this.context=context;
+        this.openSafe=openSafe;
         windows=(WindowManager)context.getSystemService(Context.WINDOW_SERVICE);
     }
     int count() { return views.size(); }
@@ -64,28 +69,59 @@ final class FeedMasks {
         }
         for(int i=0;i<regions.size();i++) {
             Rect r=regions.get(i);
-            TextView view;
+            MaskPanel view;
             if(i<views.size()) view=views.get(i);
             else {
-                view=new TextView(context);
+                view=new MaskPanel();
                 view.setBackgroundColor(PreviewMasks.COLOR);
-                view.setTextColor(0xfff4f5f7); view.setTextSize(20);
-                view.setGravity(Gravity.CENTER);
-                int pad=(int)(24*context.getResources().getDisplayMetrics().density);
-                view.setPadding(pad,pad,pad,pad);
                 view.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
                 views.add(view); windows.addView(view,params(r));
             }
-            view.setText(i==largest && r.height()>180?caption:"");
+            view.display(site,i==largest && r.height()>180);
             windows.updateViewLayout(view,params(r));
         }
         while(views.size()>regions.size()) removeLast();
         current=regions;
     }
+    private final class MaskPanel extends LinearLayout {
+        final TextView message;
+        final LinearLayout actions;
+        String buttonsFor;
+        MaskPanel() {
+            super(context);setOrientation(VERTICAL);
+            // Masked feed content has no useful touch target. Consume taps and drags,
+            // while NOT_TOUCH_MODAL leaves the uncovered navigation windows usable.
+            setOnTouchListener((v,event)->true);
+            message=new TextView(context);message.setTextColor(0xfff4f5f7);message.setTextSize(20);
+            message.setGravity(Gravity.CENTER);
+            int pad=(int)(24*context.getResources().getDisplayMetrics().density);
+            message.setPadding(pad,pad,pad,pad);
+            addView(message,new LinearLayout.LayoutParams(-1,0,1));
+            actions=new LinearLayout(context);actions.setPadding(pad/2,0,pad/2,pad/2);
+            addView(actions,new LinearLayout.LayoutParams(-1,-2));
+        }
+        void display(String site,boolean primary) {
+            message.setText(primary?caption:"");
+            String next=primary?site:"";
+            if(!next.equals(buttonsFor)) {
+                buttonsFor=next;actions.removeAllViews();
+                if(next.equals("LinkedIn")) {
+                    addAction("Сообщения","https://www.linkedin.com/messaging/");
+                    addAction("Вакансии","https://www.linkedin.com/jobs/");
+                } else if(next.equals("Instagram")) addAction("Сообщения","https://www.instagram.com/direct/inbox/");
+            }
+            actions.setVisibility(actions.getChildCount()==0?View.GONE:View.VISIBLE);
+        }
+        private void addAction(String title,String url) {
+            Button button=new Button(context);button.setText(title);button.setAllCaps(false);
+            button.setTextSize(14);button.setOnClickListener(v->openSafe.accept(url));
+            actions.addView(button,new LinearLayout.LayoutParams(0,-2,1));
+        }
+    }
     private WindowManager.LayoutParams params(Rect r) {
         WindowManager.LayoutParams p=new WindowManager.LayoutParams(r.width(),r.height(),
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE|
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL|
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN|WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.OPAQUE);
         p.gravity=Gravity.TOP|Gravity.LEFT; p.x=r.left; p.y=r.top;
@@ -101,8 +137,9 @@ final class FeedMasks {
             // Never conceal a sign-in form. Feed masking resumes after login navigation.
             if(layout.password) return;
             List<Rect> regions=new ArrayList<>();
-            Rect content=layout.feed!=null?layout.feed:layout.main!=null?layout.main:viewport;
-            regions.add(new Rect(content));
+            // Feed/main landmarks can describe only mounted cards and move/shrink
+            // during scrolling. Cover the viewport, not these content rectangles.
+            regions.add(new Rect(viewport));
             for(Rect hole:layout.controls) regions=subtract(regions,hole);
             for(Rect r:regions) if(r.width()>8 && r.height()>8) result.add(r);
             return;
@@ -175,7 +212,7 @@ final class FeedMasks {
         return out;
     }
     private void removeLast() {
-        TextView view=views.remove(views.size()-1);
+        MaskPanel view=views.remove(views.size()-1);
         try { windows.removeView(view); } catch(RuntimeException ignored) { }
     }
     void clear() {

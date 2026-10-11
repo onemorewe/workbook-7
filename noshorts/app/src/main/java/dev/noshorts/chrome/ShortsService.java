@@ -49,6 +49,7 @@ public final class ShortsService extends AccessibilityService implements SharedP
     private long pendingBlockUntil;
     private long revealAfter,revealUntil;
     private boolean addressBarMissing;
+    private boolean chromeActive;
     private volatile int toolbarRequests,toolbarGestures;
     private final Runnable poll=()->{queued=false; scan();};
 
@@ -56,7 +57,7 @@ public final class ShortsService extends AccessibilityService implements SharedP
         if(handler==null) { scanner.start(); handler=new Handler(scanner.getLooper()); }
         connected=true;
         previews=new PreviewMasks(this);
-        feeds=new FeedMasks(this);
+        feeds=new FeedMasks(this,this::openSafeUrl);
         preferences=getSharedPreferences("rules",MODE_PRIVATE);
         preferences.registerOnSharedPreferenceChangeListener(this);
         loadRules(); queue(0);
@@ -117,13 +118,14 @@ public final class ShortsService extends AccessibilityService implements SharedP
             if(w.getType()!=AccessibilityWindowInfo.TYPE_APPLICATION || (!w.isActive() && !w.isFocused())) continue;
             AccessibilityNodeInfo root=w.getRoot();
             if(root==null) continue;
-            if(CHROME.contentEquals(root.getPackageName()==null ? "" : root.getPackageName())) return root;
+            if(CHROME.contentEquals(root.getPackageName()==null ? "" : root.getPackageName())) { chromeActive=true;return root; }
+            chromeActive=false;
             root.recycle();
             return null; // Never inspect another application's text.
         }
         AccessibilityNodeInfo root=getRootInActiveWindow();
-        if(root!=null && CHROME.contentEquals(root.getPackageName()==null ? "" : root.getPackageName())) return root;
-        if(root!=null) root.recycle();
+        if(root!=null && CHROME.contentEquals(root.getPackageName()==null ? "" : root.getPackageName())) { chromeActive=true;return root; }
+        if(root!=null) { chromeActive=false;root.recycle(); }
         return null;
     }
     private void scan() {
@@ -131,7 +133,11 @@ public final class ShortsService extends AccessibilityService implements SharedP
         AccessibilityNodeInfo root=null;
         try {
             root=chromeRoot();
-            if(root==null) { removeCover(); previews.clear(); feeds.clear(); queue(250); return; }
+            if(root==null) {
+                // A temporary missing tree is not proof of leaving Chrome.
+                if(!chromeActive) { removeCover(); previews.clear(); feeds.clear(); }
+                queue(120);return;
+            }
             UrlRules.Verdict verdict=addressVerdict(root);
             long revealNow=SystemClock.elapsedRealtime();
             if(verdict==UrlRules.Verdict.UNKNOWN && addressBarMissing && revealNow>=revealAfter && revealNow<revealUntil) {
@@ -153,8 +159,9 @@ public final class ShortsService extends AccessibilityService implements SharedP
                 if(!wasBlocked && now-lastBack>1000) { lastBack=now; performGlobalAction(GLOBAL_ACTION_BACK); }
             } else {
                 removeCover();
-                previews.update(root,youtubePage);
                 feeds.update(root,feedSite);
+                if(feedSite!=null) previews.clear();
+                else previews.update(root,youtubePage);
             }
             queue(previews.count()>0 || feeds.count()>0?120:250);
         } catch(RuntimeException ex) {
@@ -164,6 +171,13 @@ public final class ShortsService extends AccessibilityService implements SharedP
             if(root!=null) root.recycle();
             previewCount=previews.count(); feedCount=feeds.count();
         }
+    }
+    private void openSafeUrl(String url) {
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(url)).setPackage(CHROME)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            queue(0);
+        } catch(RuntimeException ignored) { }
     }
     private UrlRules.Verdict addressVerdict(AccessibilityNodeInfo root) {
         List<AccessibilityNodeInfo> nodes=root.findAccessibilityNodeInfosByViewId(CHROME+":id/url_bar");

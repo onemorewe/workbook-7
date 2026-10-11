@@ -11,6 +11,8 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Rect;
+import android.view.MotionEvent;
+import android.view.InputDevice;
 import android.view.accessibility.AccessibilityNodeInfo;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
@@ -28,6 +30,7 @@ import java.util.regex.Matcher;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.io.InputStream;
+import java.io.FileOutputStream;
 import static org.junit.Assert.*;
 
 @RunWith(AndroidJUnit4.class)
@@ -112,9 +115,12 @@ public class ChromeTest {
     }
     private void injectFeed(String site) throws Exception { injectFeed(site,false); }
     private void injectFeed(String site,boolean login) throws Exception {
+        injectFeed(site,login,false);
+    }
+    private void injectFeed(String site,boolean login,boolean compact) throws Exception {
         open("http://127.0.0.1:8765/feed-fixture-start?site="+site);
         assertNotNull("Feed fixture start unavailable",device.wait(Until.findObject(By.text("Allowed page")),20000));
-        HttpURLConnection c=(HttpURLConnection)new URL("http://127.0.0.1:8765/inject-feed?site="+site+(login?"&login=1":"")).openConnection();
+        HttpURLConnection c=(HttpURLConnection)new URL("http://127.0.0.1:8765/inject-feed?site="+site+(login?"&login=1":"")+(compact?"&compact=1":"")).openConnection();
         c.setConnectTimeout(10000); c.setReadTimeout(35000);
         try {
             int code=c.getResponseCode();
@@ -485,9 +491,12 @@ public class ChromeTest {
             assertPainted(dynamic.getVisibleBounds(),Color.rgb(18,22,30),"New feed content exposed");
             UiObject2 second=null;
             for(int i=0;i<15 && second==null;i++) {
-                // A slow drag avoids flinging the card behind the fixed header/footer.
-                device.swipe(device.getDisplayWidth()*4/5,device.getDisplayHeight()*2/3,
-                    device.getDisplayWidth()*4/5,device.getDisplayHeight()/2,200);
+                // User drags are swallowed by the mask. Exercise independent page-driven
+                // scrolling through an uncovered menu, as dynamic sites can still scroll.
+                visible(By.text("Fixture menu")).click();
+                UiObject2 scroll=device.wait(Until.findObject(By.text("Scroll feed")),5000);
+                assertNotNull(scroll);scroll.click();
+                visible(By.text("Close menu")).click();
                 SystemClock.sleep(500);
                 UiObject2 candidate=visible(By.text("Fixture feed post two"));
                 if(candidate!=null) {
@@ -535,6 +544,76 @@ public class ChromeTest {
             assertTrue("Password field unavailable",visiblePassword());
             assertEquals("Login page was blocked",before,state().transitions);
             feedEvidence(site,"-login");
+        }
+    }
+    private void assertNoExposedFeed(UiAutomation automation,String label) throws Exception {
+        Bitmap shot=automation.takeScreenshot();assertNotNull("No scroll screenshot",shot);
+        try {
+            int exposed=0;
+            for(int y=shot.getHeight()/4;y<shot.getHeight()*4/5;y+=2)
+                for(int x=shot.getWidth()/5;x<shot.getWidth()*4/5;x+=2) {
+                    int c=shot.getPixel(x,y);
+                    if(Color.red(c)>240 && Color.green(c)<15 && Color.blue(c)>240) exposed++;
+                }
+            File dir=new File(app.getExternalFilesDir(null),"ci-evidence");dir.mkdirs();
+            try(FileOutputStream out=new FileOutputStream(new File(dir,"continuous-"+label+".png"))) {
+                shot.compress(Bitmap.CompressFormat.PNG,100,out);
+            }
+            assertEquals("Feed pixels exposed during gesture: "+label,0,exposed);
+        } finally { shot.recycle(); }
+    }
+    private void touch(UiAutomation automation,long down,int action,float x,float y) {
+        MotionEvent e=MotionEvent.obtain(down,SystemClock.uptimeMillis(),action,x,y,0);
+        e.setSource(InputDevice.SOURCE_TOUCHSCREEN);
+        try { assertTrue("Touch injection failed",automation.injectInputEvent(e,true)); }
+        finally { e.recycle(); }
+    }
+    @Test public void test13FeedSwallowsTapsAndDragsWithShortLandmark() throws Exception {
+        home();UiAutomation automation=InstrumentationRegistry.getInstrumentation()
+            .getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES);
+        for(String site:new String[]{"YouTube","Instagram","LinkedIn"}) {
+            injectFeed(site,false,true);dismissObservedChromeTip();
+            assertNoExposedFeed(automation,site+"-before");
+            UiObject2 post=visible(By.text("Fixture feed post one"));assertNotNull(post);
+            Rect first=new Rect(post.getVisibleBounds());
+            device.click(first.centerX(),first.centerY());
+            SystemClock.sleep(200);
+            assertNotNull("Tap reached the covered feed",visible(By.text("Fixture feed taps: 0")));
+            int w=device.getDisplayWidth(),h=device.getDisplayHeight();
+            for(int gesture=0;gesture<3;gesture++) {
+                long down=SystemClock.uptimeMillis();float x=w*0.7f,from=h*0.72f,to=h*0.35f;
+                if(gesture==1) { float swap=from;from=to;to=swap; }
+                touch(automation,down,MotionEvent.ACTION_DOWN,x,from);
+                try {
+                    for(int move=1;move<=12;move++) {
+                        touch(automation,down,MotionEvent.ACTION_MOVE,x,from+(to-from)*move/12);
+                        if(move%4==0) assertNoExposedFeed(automation,site+"-"+gesture+"-"+move);
+                        SystemClock.sleep(25);
+                    }
+                } finally { touch(automation,down,MotionEvent.ACTION_UP,x,to); }
+                assertNoExposedFeed(automation,site+"-after-"+gesture);
+            }
+            post=visible(By.text("Fixture feed post one"));assertNotNull("Drag scrolled the covered feed",post);
+            assertEquals("Underlying page moved under the mask",first,post.getVisibleBounds());
+            assertNotNull("Covered gestures reached feed content",visible(By.text("Fixture feed taps: 0")));
+            assertFalse("Mask caused a blocking navigation",state().cover);
+            feedEvidence(site,"-touch-guard");
+        }
+    }
+    @Test public void test14LinkedInOwnNavigationWithoutPageMessagesButton() throws Exception {
+        home();
+        for(String action:new String[]{"Сообщения","Вакансии"}) {
+            injectFeed("LinkedIn",false,true);dismissObservedChromeTip();
+            assertNull("Fixture must omit its own Messages button",visible(By.text("Messages")));
+            UiObject2 button=device.wait(Until.findObject(By.text(action)),5000);
+            assertNotNull("NoShorts navigation unavailable: "+action,button);
+            assertEquals("Expected a native mask button",BLOCKER,button.getApplicationPackage());
+            button.click();
+            await(()->feedMaskCount()==0 && address().contains("linkedin.com"),15000,
+                "Native safe navigation left feed masked: "+action);
+            assertEquals("Native safe navigation left Chrome","com.android.chrome",device.getCurrentPackageName());
+            assertFalse("Native navigation was blocked",state().cover);
+            feedEvidence("LinkedIn",action.equals("Сообщения")?"-own-messages":"-own-jobs");
         }
     }
 }

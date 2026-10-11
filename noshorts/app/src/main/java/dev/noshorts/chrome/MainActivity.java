@@ -23,7 +23,7 @@ public final class MainActivity extends Activity {
         LinearLayout box=new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(40,60,40,40);
         scroll.addView(box); setContentView(scroll);
         text(box,"NoShorts",30);
-        text(box,"Ленты YouTube, Instagram и LinkedIn открываются в Chrome, но их содержимое скрыто. На его месте — персональные послания Пичаи, Цукербергу и Наделле. Поиск, меню, сообщения и вакансии остаются доступны. Shorts заблокированы, их превью скрыты.",18);
+        text(box,"Ленты YouTube, Instagram и LinkedIn открываются в Chrome, но их содержимое скрыто. На его месте — персональные послания Пичаи, Цукербергу и Наделле. Поиск, меню, сообщения и вакансии остаются доступны. Закрытая область поглощает касания и свайпы. На маске LinkedIn есть кнопки сообщений и вакансий, на Instagram — сообщений. Shorts заблокированы, их превью скрыты.",18);
         text(box,"Открыть нужное напрямую",22);
         EditText query=new EditText(this); query.setId(R.id.youtube_search); query.setSingleLine(true);
         query.setHint("Что найти на YouTube?"); box.addView(query);

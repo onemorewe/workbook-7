@@ -25,7 +25,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 query=urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
                 site=query['site'][0]
-                content=json.dumps(inject(site,query.get('login')==['1'])).encode();self.send_response(200)
+                content=json.dumps(inject(site,query.get('login')==['1'],query.get('compact')==['1'])).encode();self.send_response(200)
             except Exception as ex:
                 traceback.print_exc();content=json.dumps({'error':str(ex)}).encode();self.send_response(500)
             self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(content)))
