@@ -1,0 +1,30 @@
+{
+  "versionName": "0.5.1",
+  "versionCode": 100060,
+  "package": "dev.noshorts.chrome",
+  "apkSHA256": "8da860101c275b9d46e1ff86506c6a98d5f6a8b402dc3faebd493e0c1a5f2c4d",
+  "apkSize": 28596,
+  "zipSHA256": "645d2f0308657d60944b0539f8bf7f5ba8656417d2c0154ac341635c5a734984",
+  "zipSize": 25632,
+  "certificateSHA256": "25606cf1c6edbfdf2ce38285a9d1e94b5b5580b198c5e40f9ec4087f7cc447f2",
+  "testedSource": "ae36cbce1b9ac541e9ff6aac0873a452a1a0e526",
+  "workflowRun": 38168612996,
+  "runNumber": 30,
+  "workflowURL": "https://github.com/onemorewe/workbook-7/actions/runs/38168612996",
+  "coreChecks": 714,
+  "browserTests": 14,
+  "browserFailures": 0,
+  "continuousGestureScreenshots": 39,
+  "testedEnvironment": "Android15/API35 emulator; Chrome154.0.8037.126",
+  "htmlProbe": {
+    "run": 38168951917,
+    "result": false,
+    "reason": "javascript prefix removed during accessibility SET_TEXT; code became a search query"
+  },
+  "limitations": [
+    "Samsung Android16 not directly tested",
+    "Feed layouts tested with controlled HTML at real origins; signed-in live LinkedIn/Instagram not verified",
+    "Shorts previews on otherwise allowed pages still use moving accessibility masks",
+    "DOM editing is not implemented"
+  ]
+}
