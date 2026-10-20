@@ -38,8 +38,8 @@ jobs:
           mkdir -p "$ANDROID_AVD_HOME"
           test -c /dev/kvm
           sudo chown "$USER" /dev/kvm
+          sdkmanager 'emulator' 'platforms;android-36' 'build-tools;36.0.0' 'system-images;android-36;google_apis;x86_64' >sdk-install.log 2>&1
           emulator -accel-check
-          sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'system-images;android-36;google_apis;x86_64' >sdk-install.log 2>&1
           echo no | avdmanager create avd --force -n alpha-main -k 'system-images;android-36;google_apis;x86_64' --device pixel_7
           emulator -avd alpha-main -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader -accel on -cores 2 -memory 4096 -camera-back emulated -camera-front none >emulator.log 2>&1 &
           timeout 360 adb -s emulator-5554 wait-for-device
