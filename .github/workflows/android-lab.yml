@@ -9,7 +9,7 @@ permissions:
   id-token: write
 concurrency:
   group: alpha-android-stand
-  cancel-in-progress: false
+  cancel-in-progress: true
 jobs:
   android:
     runs-on: ubuntu-24.04
@@ -24,9 +24,10 @@ jobs:
           LAB_WORK="$RUNNER_TEMP/alpha-android-lab"
           mkdir -p "$LAB_WORK/probe" "$LAB_WORK/node"
           cd "$LAB_WORK"
-          for file in agent.py build-probe.py probe/MainActivity.java probe/AndroidManifest.xml probe/index.html; do
+          for file in agent.py test_agent.py build-probe.py probe/MainActivity.java probe/AndroidManifest.xml probe/index.html; do
             curl --fail --silent --show-error --location "https://raw.githubusercontent.com/onemorewe/workbook-7/$GITHUB_SHA/android-lab/$file" -o "$file"
           done
+          python3 test_agent.py
           curl --fail --silent --show-error --location https://nodejs.org/dist/v24.22.0/SHASUMS256.txt -o SHASUMS256.txt
           curl --fail --silent --show-error --location https://nodejs.org/dist/v24.22.0/node-v24.22.0-linux-x64.tar.xz -o node-v24.22.0-linux-x64.tar.xz
           grep ' node-v24.22.0-linux-x64.tar.xz$' SHASUMS256.txt | sha256sum --check
@@ -56,7 +57,7 @@ jobs:
           npm install --prefix automation --no-audit --no-fund --save-exact appium@3.8.0 appium-uiautomator2-driver@8.7.0 >npm-install.log 2>&1
           node automation/node_modules/appium/build/lib/main.js driver install --source=local "$LAB_WORK/automation/node_modules/appium-uiautomator2-driver" >driver-install.log 2>&1
           python3 build-probe.py
-          node automation/node_modules/appium/build/lib/main.js --address 127.0.0.1 --port 4723 --allow-insecure uiautomator2:chromedriver_autodownload --log appium.log >appium-console.log 2>&1 &
+          node automation/node_modules/appium/build/lib/main.js --address 127.0.0.1 --port 4723 --log-level warn --allow-insecure uiautomator2:chromedriver_autodownload --log appium.log >appium-console.log 2>&1 &
           for attempt in $(seq 1 60); do if curl --fail --silent http://127.0.0.1:4723/status >/dev/null; then break; fi; sleep 1; done
           python3 agent.py
       - name: Print bounded diagnostics on failure
@@ -64,7 +65,7 @@ jobs:
         shell: bash
         run: |
           LAB_WORK="$RUNNER_TEMP/alpha-android-lab"
-          for file in sdk-install.log emulator.log npm-install.log driver-install.log appium-console.log; do
+          for file in sdk-install.log emulator.log npm-install.log driver-install.log; do
             if [ -f "$LAB_WORK/$file" ]; then tail -n 35 "$LAB_WORK/$file"; fi
           done
 

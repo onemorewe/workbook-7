@@ -19,7 +19,7 @@ def relay(path,data=None,binary=False):
  with urllib.request.urlopen(req,timeout=30)as r:return r.read()if binary else json.load(r)
 def wd(method,path,data=None):
  raw=None if data is None else json.dumps(data,ensure_ascii=False).encode()
- req=urllib.request.Request('http://127.0.0.1:4723'+path,data=raw,method=method,headers={'Content-Type':'application/json'})
+ req=urllib.request.Request('http://127.0.0.1:4723'+path,data=raw,method=method,headers={'Content-Type':'application/json','X-Appium-Is-Sensitive':'true'})
  with urllib.request.urlopen(req,timeout=120)as r:v=json.load(r)
  if isinstance(v.get('value'),dict)and v['value'].get('error'):raise RuntimeError(str(v['value'])[:1500])
  return v.get('value')
@@ -51,11 +51,25 @@ def probe():
 def heartbeat(state='ready'):
  return relay('status',{'runId':RUN,'state':state,'expiresAt':EXPIRES,'profile':'alpha-main-api36-412x915','width':WIDTH,'height':HEIGHT,'api':36,'bootId':adb('shell','cat','/proc/sys/kernel/random/boot_id'),'webview':adb('shell','dumpsys','webviewupdate')[:2000],'probe':PROBE_RESULT})
 def frame():relay('frame',base64.b64decode(command('GET','/screenshot')),True)
+def screen_point(value,size):return max(0,min(size-1,round(value*(size-1))))
+def control_tick(pending,take,perform,complete):
+ if pending is None:
+  cmd=take()
+  if not cmd:return None
+  try:detail=perform(cmd);state='passed'
+  except Exception as error:detail={'error':str(error)[:2000]};state='failed'
+  pending={'id':cmd['id'],'runId':RUN,'state':state,'detail':detail}
+ try:complete(pending)
+ except Exception:return pending
+ return None
+def complete_result(result):
+ ack=relay('result',result)
+ if not isinstance(ack,dict)or ack.get('ok')is not True:raise RuntimeError('Completion not acknowledged')
 def execute(c):
  if c['runId']!=RUN or c['expiresAt']<time.time()*1000:raise RuntimeError('Stale command')
  kind=c['kind']
- if kind=='tap':tap(c['x']*WIDTH,c['y']*HEIGHT)
- elif kind=='swipe':command('POST','/actions',{'actions':[{'type':'pointer','id':'finger','parameters':{'pointerType':'touch'},'actions':[{'type':'pointerMove','duration':0,'x':round(c['x']*WIDTH),'y':round(c['y']*HEIGHT)},{'type':'pointerDown','button':0},{'type':'pointerMove','duration':c['duration'],'x':round(c['x2']*WIDTH),'y':round(c['y2']*HEIGHT)},{'type':'pointerUp','button':0}]}]})
+ if kind=='tap':tap(screen_point(c['x'],WIDTH),screen_point(c['y'],HEIGHT))
+ elif kind=='swipe':command('POST','/actions',{'actions':[{'type':'pointer','id':'finger','parameters':{'pointerType':'touch'},'actions':[{'type':'pointerMove','duration':0,'x':screen_point(c['x'],WIDTH),'y':screen_point(c['y'],HEIGHT)},{'type':'pointerDown','button':0},{'type':'pointerMove','duration':c['duration'],'x':screen_point(c['x2'],WIDTH),'y':screen_point(c['y2'],HEIGHT)},{'type':'pointerUp','button':0}]}]})
  elif kind=='key':command('POST','/appium/device/press_keycode',{'keycode':{'HOME':3,'BACK':4,'ENTER':66,'APP_SWITCH':187}[c['key']]})
  elif kind=='text':
   e=command('GET','/element/active');eid=e.get('element-6066-11e4-a52e-4f735466cecf')or e['ELEMENT'];command('POST','/element/'+eid+'/value',{'text':c['text']})
@@ -87,16 +101,12 @@ def main():
   print('Synthetic probe crash log: '+adb('logcat','-d','-s','AndroidRuntime')[-6000:],flush=True)
   raise
  (ROOT/'build/probe-receipt.json').write_text(json.dumps(PROBE_RESULT,ensure_ascii=False,indent=2));print('Native probe passed: touch, Unicode, Back and persistence.',flush=True)
- heartbeat();frame();last_frame=time.time();last_heartbeat=time.time()
+ heartbeat();frame();last_frame=time.time();last_heartbeat=time.time();pending=None
  while time.time()*1000<EXPIRES-10000:
   try:
    if time.time()-last_heartbeat>7:heartbeat();last_heartbeat=time.time()
-   c=relay('next')
-   if c:
-    try:detail=execute(c);state='passed'
-    except Exception as e:detail={'error':str(e)[:2000]};state='failed'
-    relay('result',{'id':c['id'],'runId':RUN,'state':state,'detail':detail});frame();last_frame=time.time()
-   elif time.time()-last_frame>5:frame();last_frame=time.time()
+   pending=control_tick(pending,lambda:relay('next'),execute,complete_result)
+   if time.time()-last_frame>5:frame();last_frame=time.time()
   except Exception as e:print('Control channel temporarily unavailable: '+type(e).__name__,flush=True)
   time.sleep(1)
  heartbeat('stopped');command('DELETE','',None)
