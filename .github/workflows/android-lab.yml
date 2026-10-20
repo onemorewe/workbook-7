@@ -1,0 +1,70 @@
+name: Alpha Lab Android stand
+on:
+  push:
+    branches: [android-lab-s24-ultra]
+    paths: [android-lab/**, .github/workflows/android-lab.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: alpha-android-stand
+  cancel-in-progress: false
+jobs:
+  android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      LAB_RELAY: https://lifestyle-tan-consciousness-absence.trycloudflare.com
+    steps:
+      - name: Prepare accelerated Android and synthetic probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          LAB_WORK="$RUNNER_TEMP/alpha-android-lab"
+          mkdir -p "$LAB_WORK/probe" "$LAB_WORK/node"
+          cd "$LAB_WORK"
+          for file in agent.py build-probe.py probe/MainActivity.java probe/AndroidManifest.xml probe/index.html; do
+            curl --fail --silent --show-error --location "https://raw.githubusercontent.com/onemorewe/workbook-7/$GITHUB_SHA/android-lab/$file" -o "$file"
+          done
+          curl --fail --silent --show-error --location https://nodejs.org/dist/v24.22.0/SHASUMS256.txt -o SHASUMS256.txt
+          curl --fail --silent --show-error --location https://nodejs.org/dist/v24.22.0/node-v24.22.0-linux-x64.tar.xz -o node-v24.22.0-linux-x64.tar.xz
+          grep ' node-v24.22.0-linux-x64.tar.xz$' SHASUMS256.txt | sha256sum --check
+          tar -xJf node-v24.22.0-linux-x64.tar.xz --strip-components=1 -C node
+          export PATH="$LAB_WORK/node/bin:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
+          export ANDROID_AVD_HOME="$LAB_WORK/avd"
+          export APPIUM_HOME="$LAB_WORK/appium-home"
+          export APPIUM_SKIP_CHROMEDRIVER_INSTALL=1
+          mkdir -p "$ANDROID_AVD_HOME"
+          test -c /dev/kvm
+          sudo chown "$USER" /dev/kvm
+          emulator -accel-check
+          sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'system-images;android-36;google_apis;x86_64' >sdk-install.log 2>&1
+          echo no | avdmanager create avd --force -n alpha-main -k 'system-images;android-36;google_apis;x86_64' --device pixel_7
+          emulator -avd alpha-main -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader -accel on -cores 2 -memory 4096 -camera-back emulated -camera-front none >emulator.log 2>&1 &
+          timeout 360 adb -s emulator-5554 wait-for-device
+          BOOT_READY=0
+          for attempt in $(seq 1 180); do
+            state=$(adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)
+            if [ "$state" = 1 ]; then BOOT_READY=1; break; fi
+            sleep 2
+          done
+          test "$BOOT_READY" = 1
+          adb -s emulator-5554 shell settings put global window_animation_scale 0
+          adb -s emulator-5554 shell settings put global transition_animation_scale 0
+          adb -s emulator-5554 shell settings put global animator_duration_scale 0
+          npm install --prefix automation --no-audit --no-fund --save-exact appium@3.8.0 appium-uiautomator2-driver@8.7.0 >npm-install.log 2>&1
+          node automation/node_modules/appium/build/lib/main.js driver install --source=local "$LAB_WORK/automation/node_modules/appium-uiautomator2-driver" >driver-install.log 2>&1
+          python3 build-probe.py
+          node automation/node_modules/appium/build/lib/main.js --address 127.0.0.1 --port 4723 --allow-insecure uiautomator2:chromedriver_autodownload --log appium.log >appium-console.log 2>&1 &
+          for attempt in $(seq 1 60); do if curl --fail --silent http://127.0.0.1:4723/status >/dev/null; then break; fi; sleep 1; done
+          python3 agent.py
+      - name: Print bounded diagnostics on failure
+        if: failure()
+        shell: bash
+        run: |
+          LAB_WORK="$RUNNER_TEMP/alpha-android-lab"
+          for file in sdk-install.log emulator.log npm-install.log driver-install.log appium-console.log; do
+            if [ -f "$LAB_WORK/$file" ]; then tail -n 35 "$LAB_WORK/$file"; fi
+          done
+
