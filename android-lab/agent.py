@@ -25,7 +25,12 @@ def wd(method,path,data=None):
  return v.get('value')
 def command(method,path,data=None):return wd(method,'/session/'+SESSION+path,data)
 def find(using,value):
- result=command('POST','/element',{'using':using,'value':value});return result.get('element-6066-11e4-a52e-4f735466cecf')or result['ELEMENT']
+ last=None
+ for _ in range(20):
+  try:
+   result=command('POST','/element',{'using':using,'value':value});return result.get('element-6066-11e4-a52e-4f735466cecf')or result['ELEMENT']
+  except urllib.error.HTTPError as error:last=error;time.sleep(.5)
+ raise last
 def tap(x,y):command('POST','/actions',{'actions':[{'type':'pointer','id':'finger','parameters':{'pointerType':'touch'},'actions':[{'type':'pointerMove','duration':0,'x':round(x),'y':round(y)},{'type':'pointerDown','button':0},{'type':'pause','duration':80},{'type':'pointerUp','button':0}]}]})
 def tap_element(e):
  r=command('GET','/element/'+e+'/rect');tap(r['x']+r['width']/2,r['y']+r['height']/2)
@@ -76,7 +81,12 @@ def main():
  adb('shell','wm','size',str(WIDTH)+'x'+str(HEIGHT));adb('shell','wm','density','480');adb('shell','input','keyevent','82');adb('install','-r','-t',str(ROOT/'build/probe.apk'))
  caps={'platformName':'Android','appium:automationName':'UiAutomator2','appium:udid':'emulator-5554','appium:appPackage':PROBE,'appium:appActivity':'.MainActivity','appium:noReset':True,'appium:newCommandTimeout':300,'appium:adbExecTimeout':90000}
  response=wd('POST','/session',{'capabilities':{'alwaysMatch':caps}});SESSION=response['sessionId']
- PROBE_RESULT=probe();(ROOT/'build/probe-receipt.json').write_text(json.dumps(PROBE_RESULT,ensure_ascii=False,indent=2));print('Native probe passed: touch, Unicode, Back and persistence.',flush=True)
+ try:PROBE_RESULT=probe()
+ except Exception:
+  print('Synthetic probe failure UI: '+command('GET','/source')[:8000],flush=True)
+  print('Synthetic probe crash log: '+adb('logcat','-d','-s','AndroidRuntime')[-6000:],flush=True)
+  raise
+ (ROOT/'build/probe-receipt.json').write_text(json.dumps(PROBE_RESULT,ensure_ascii=False,indent=2));print('Native probe passed: touch, Unicode, Back and persistence.',flush=True)
  heartbeat();frame();last_frame=time.time();last_heartbeat=time.time()
  while time.time()*1000<EXPIRES-10000:
   try:
