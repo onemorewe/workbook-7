@@ -2,6 +2,13 @@ import os,json,time,base64,subprocess,urllib.request,urllib.parse,hashlib,uuid,t
 from pathlib import Path
 ROOT=Path(__file__).parent.resolve();RELAY=os.environ['LAB_RELAY'];RUN='gh-'+os.environ['GITHUB_RUN_ID']+'-'+os.environ['GITHUB_RUN_ATTEMPT'];EXPIRES=int((time.time()+35*60)*1000)
 TOKEN='';TOKEN_TIME=0;SESSION='';PROBE='dev.stas.s24lab.probe';WIDTH=1236;HEIGHT=2745;PROBE_RESULT=None
+DENSITY=480;PROFILE='alpha-main'
+PROFILES={'alpha-main':('alpha-main-api36-412x915',1236,2745,480),'s24-ultra':('galaxy-s24-ultra-api36',1440,3120,560)}
+def set_profile(key):
+ global WIDTH,HEIGHT,DENSITY,PROFILE
+ if key not in PROFILES:raise ValueError('Invalid fixed profile')
+ _,WIDTH,HEIGHT,DENSITY=PROFILES[key];PROFILE=key
+ adb('shell','wm','size',str(WIDTH)+'x'+str(HEIGHT));adb('shell','wm','density',str(DENSITY))
 def adb(*args):return subprocess.check_output(['adb','-s','emulator-5554',*args],timeout=90).decode('utf-8',errors='replace').strip()
 def token():
  global TOKEN,TOKEN_TIME
@@ -49,7 +56,7 @@ def probe():
  stored=adb('shell','run-as',PROBE,'cat','shared_prefs/stand.xml');assert value in stored,'Durable preferences missing input'
  return {'state':'passed','ordinaryTouch':True,'webview':True,'unicodeInput':True,'androidBack':True,'forceStopRelaunch':True,'durableStorage':True,'fixtureValue':value,'apkSha256':hashlib.sha256((ROOT/'build/probe.apk').read_bytes()).hexdigest(),'capturedAt':int(time.time()*1000)}
 def heartbeat(state='ready'):
- return relay('status',{'runId':RUN,'state':state,'expiresAt':EXPIRES,'profile':'alpha-main-api36-412x915','width':WIDTH,'height':HEIGHT,'api':36,'bootId':adb('shell','cat','/proc/sys/kernel/random/boot_id'),'webview':adb('shell','dumpsys','webviewupdate')[:2000],'probe':PROBE_RESULT})
+ return relay('status',{'runId':RUN,'state':state,'expiresAt':EXPIRES,'profile':PROFILES[PROFILE][0],'width':WIDTH,'height':HEIGHT,'density':DENSITY,'api':36,'bootId':adb('shell','cat','/proc/sys/kernel/random/boot_id'),'webview':adb('shell','dumpsys','webviewupdate')[:2000],'probe':PROBE_RESULT})
 def frame():relay('frame',base64.b64decode(command('GET','/screenshot')),True)
 def screen_point(value,size):return max(0,min(size-1,round(value*(size-1))))
 def control_tick(pending,take,perform,complete):
@@ -66,6 +73,7 @@ def complete_result(result):
  ack=relay('result',result)
  if not isinstance(ack,dict)or ack.get('ok')is not True:raise RuntimeError('Completion not acknowledged')
 def execute(c):
+ global PROBE_RESULT
  if c['runId']!=RUN or c['expiresAt']<time.time()*1000:raise RuntimeError('Stale command')
  kind=c['kind']
  if kind=='tap':tap(screen_point(c['x'],WIDTH),screen_point(c['y'],HEIGHT))
@@ -87,7 +95,8 @@ def execute(c):
   assert len(data)<=96*1024*1024 and hashlib.sha256(data).hexdigest()==digest,'APK hash mismatch'
   file=ROOT/'build'/('upload-'+c['asset']+'.apk');file.write_bytes(data);result=adb('install','-r','-t',str(file));file.unlink();return {'install':result,'sha256':digest}
  elif kind=='logs':return {'logcat':adb('logcat','-d','-t','120')[-10000:]}
- elif kind=='probe':return probe()
+ elif kind=='probe':PROBE_RESULT=probe();heartbeat();return PROBE_RESULT
+ elif kind=='profile':set_profile(c['profile']);PROBE_RESULT=None;time.sleep(1);heartbeat();return {'profile':PROFILES[PROFILE][0],'width':WIDTH,'height':HEIGHT,'density':DENSITY}
  else:raise RuntimeError('Command not supported')
  return {'executed':kind}
 def main():
@@ -111,4 +120,3 @@ def main():
   time.sleep(1)
  heartbeat('stopped');command('DELETE','',None)
 if __name__=='__main__':main()
-

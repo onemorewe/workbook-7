@@ -28,5 +28,12 @@ class AgentContracts(unittest.TestCase):
   def open_request(request,**kwargs):seen.append(request);return Response(b'{"value":{}}')
   with patch.object(agent.urllib.request,'urlopen',open_request):agent.wd('POST','/session/x/element/y/value',{'text':'private input'})
   self.assertEqual(seen[0].get_header('X-appium-is-sensitive'),'true')
+ def test_samsung_geometry_is_fixed_and_cannot_execute_caller_text(self):
+  calls=[]
+  with patch.object(agent,'adb',lambda *args:calls.append(args)):
+   agent.set_profile('s24-ultra')
+   self.assertEqual((agent.WIDTH,agent.HEIGHT,agent.DENSITY),(1440,3120,560))
+   self.assertEqual(calls,[('shell','wm','size','1440x3120'),('shell','wm','density','560')])
+   with self.assertRaises(ValueError):agent.set_profile('1440;reboot')
+   agent.set_profile('alpha-main')
 if __name__=='__main__':unittest.main()
-
