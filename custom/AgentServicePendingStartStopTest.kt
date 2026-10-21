@@ -159,7 +159,7 @@ class AgentServicePendingStartStopTest {
                 startup.join()
                 runCurrent()
 
-                coVerify(exactly = 0) { createdSession.submit(any<Op.UserInput>()) }
+                coVerify(exactly = 0) { createdSession.submit(match<Op> { it is Op.UserInput }) }
                 assertNull("A stopped startup must not publish its late session", service.getActiveSession())
                 coVerify(exactly = 1) { createdSession.submit(Op.Shutdown) }
                 assertEquals("\ud83d\uded1 Agent stopped", AgentService.statusFlow.value)
@@ -226,7 +226,7 @@ class AgentServicePendingStartStopTest {
         runCurrent()
 
         assertSame(newerSession, service.getActiveSession())
-        coVerify(exactly = 0) { createdSession.submit(any<Op.UserInput>()) }
+        coVerify(exactly = 0) { createdSession.submit(match<Op> { it is Op.UserInput }) }
         coVerify(exactly = 1) { createdSession.submit(Op.Shutdown) }
         coVerify(exactly = 1) { newerSession.submit(Op.UserInput("newer synthetic goal")) }
         coVerify(exactly = 0) { newerSession.submit(Op.Shutdown) }
@@ -299,7 +299,7 @@ class AgentServicePendingStartStopTest {
 
         assertTrue(startup.isCancelled)
         assertNull(service.getActiveSession())
-        coVerify(exactly = 0) { createdSession.submit(any<Op.UserInput>()) }
+        coVerify(exactly = 0) { createdSession.submit(match<Op> { it is Op.UserInput }) }
         coVerify(exactly = 1) { createdSession.submit(Op.Shutdown) }
         assertEquals("\ud83d\uded1 Agent stopped", AgentService.statusFlow.value)
     }
