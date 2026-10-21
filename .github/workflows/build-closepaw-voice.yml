@@ -2,7 +2,7 @@ name: Build ClosePaw GPT Voice
 
 on:
   push:
-    branches: [main, alyosha-live-intent, alyosha-microwakeword, handsfree-crash-runtime-panel]
+    branches: [main, alyosha-live-intent, alyosha-microwakeword, handsfree-crash-runtime-panel, test/agent-service-pending-stop-20261021]
   workflow_dispatch:
 
 permissions:
@@ -144,6 +144,14 @@ jobs:
           cd closepaw
           python3 patch_handsfree_oauth_primary.py
 
+      - name: Add pending-start Stop regression
+        run: |
+          mkdir -p closepaw/app/src/test/kotlin/ai/closepaw/app
+          cp custom/AgentServicePendingStartStopTest.kt closepaw/app/src/test/kotlin/ai/closepaw/app/AgentServicePendingStartStopTest.kt
+
+      - name: Guard pending AgentSession startup
+        run: python3 patch_agent_pending_start_stop.py closepaw
+
       - name: Check UI smoke selectors against generated screen
         run: python3 tests/test_voice_runtime_ui_contract.py closepaw
 
@@ -196,6 +204,15 @@ jobs:
       - name: Run unit tests
         working-directory: closepaw
         run: ./gradlew :app:testDebugUnitTest --stacktrace
+
+      - name: Upload pending-start Stop JUnit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClosePaw-pending-start-stop-junit-${{ github.run_number }}
+          path: closepaw/app/build/test-results/testDebugUnitTest/TEST-ai.closepaw.app.AgentServicePendingStartStopTest.xml
+          if-no-files-found: warn
+          retention-days: 14
 
       # Opt in with workflow_dispatch or [android-ui] in the pushed HEAD commit message.
       - name: Enable KVM for Android emulator
