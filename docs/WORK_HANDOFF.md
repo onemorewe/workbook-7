@@ -197,9 +197,11 @@ The existing emulator steps run on `workflow_dispatch` or when a push HEAD commi
 The existing runner uses API 35, x86_64, Pixel 6 with animations disabled. Only these classes run:
 
 - `HandsFreeSafetyInstrumentedTest`: microphone-permission startup block (case returns early if permission is already granted), synthetic final-transcript delivery, and duplicate final-transcript suppression. Parser cases call `handleServerEventForTest` with `test-key-not-used`; they never call the WebSocket-opening `start()` method.
-- `VoiceRuntimeUiInstrumentedTest`: fresh debug launch with blank goal, real drawer/Settings/Voice & Runtime navigation, panel text checks, and hands-free button without process crash. No provider credentials are installed; the existing preflight returns before service startup when the transcription key is absent. The current UI assertion verifies the screen remains present; it does not assert the exact error text.
+- `VoiceRuntimeUiInstrumentedTest`: fresh debug launch with blank goal, real drawer/Settings/Voice & Runtime navigation, panel text checks, bounded scrolling to the hands-free button, and visible missing-transcription-key error after the click. It also requires the app package to remain foreground and hands-free to remain disabled. No provider credentials are installed; the existing preflight returns before service startup when the transcription key is absent.
 
-Live inference allowance is **0**. Do not inject AI API keys or OAuth accounts into this emulator. The scoped trace-write secret is only for diagnostic ingest and is not an AI credential. No speech generation, subscription login, STT request or intent/agent inference is part of these tests. The new opt-in run is **NOT_RUN** until its own GitHub result is checked; run 140 is only the baseline.
+Live inference allowance is **0**. Do not inject AI API keys or OAuth accounts into this emulator. The scoped trace-write secret is only for diagnostic ingest and is not an AI credential. No speech generation, subscription login, STT request or intent/agent inference is part of these tests. After any test or app change, require the exact candidate's successful emulator run; run 140 is only the baseline.
+
+Run **141** (`39662057400`, source `fd645a30d3af0cf73c4a8c8ca9e5da351a55624c`) exercised the emulator: four tests finished, three passed and the UI case failed with `Hands-free enable button missing`. The test had not scrolled past the runtime card and threshold controls. Release/signature/upload were skipped; there is no APK artifact for run 141. The bounded-scroll candidate and stronger missing-key assertion require a new successful emulator run before this failure can be marked fixed.
 
 ## Wake failure investigation — 2026-09-05
 

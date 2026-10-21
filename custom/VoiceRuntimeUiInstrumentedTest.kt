@@ -6,6 +6,8 @@ import ai.closepaw.app.MainActivity
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
+import androidx.test.uiautomator.UiScrollable
+import androidx.test.uiautomator.UiSelector
 import androidx.test.uiautomator.Until
 import java.io.ByteArrayOutputStream
 import junit.framework.TestCase
@@ -72,6 +74,27 @@ class VoiceRuntimeUiInstrumentedTest : TestCase() {
         assertNotNull("Shared transcription section missing", device.findObject(By.text("Transcription · normal mic + Jarvis")))
         assertNotNull("Hands-free section missing", device.findObject(By.text("Hands-free")))
 
+        // The button follows runtime details and a slider inside the real scrollable page.
+        // A visible section heading does not imply that its controls fit in the viewport.
+        fun scrollToText(text: String) {
+            val result = runCatching {
+                UiScrollable(UiSelector().scrollable(true))
+                    .setAsVerticalList()
+                    .setMaxSearchSwipes(6)
+                    .scrollIntoView(UiSelector().text(text))
+            }
+            if (result.getOrDefault(false)) return
+            val hierarchy = ByteArrayOutputStream().use { out ->
+                runCatching { device.dumpWindowHierarchy(out) }
+                out.toString(Charsets.UTF_8.name()).take(12_000)
+            }
+            fail(
+                "Could not scroll to '$text'; currentPackage=${device.currentPackageName}; " +
+                    "scrollError=${result.exceptionOrNull()?.message}; hierarchy=$hierarchy"
+            )
+        }
+
+        scrollToText("Turn on hands-free")
         val enable = device.wait(Until.findObject(By.text("Turn on hands-free")), 5_000L)
         assertNotNull("Hands-free enable button missing", enable)
         enable.click()
@@ -79,9 +102,13 @@ class VoiceRuntimeUiInstrumentedTest : TestCase() {
         // No credentials are installed in this hermetic emulator. The expected result is a visible
         // preflight error while the app stays alive on the same screen, never a process crash.
         device.waitForIdle()
+        val expectedError = "Last error: OpenAI API key is required for live transcription"
+        scrollToText(expectedError)
         assertNotNull(
-            "App left/crashed after pressing hands-free",
-            device.wait(Until.findObject(By.text("Voice & Runtime")), 5_000L),
+            "Missing credential preflight error was not rendered",
+            device.wait(Until.findObject(By.text(expectedError)), 5_000L),
         )
+        assertEquals("App left/crashed after pressing hands-free", context.packageName, device.currentPackageName)
+        assertFalse("Hands-free started without a transcription credential", HandsFreeVoiceService.isEnabled(context))
     }
 }
