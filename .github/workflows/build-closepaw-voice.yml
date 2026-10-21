@@ -2,7 +2,7 @@ name: Build ClosePaw GPT Voice
 
 on:
   push:
-    branches: [main, alyosha-live-intent, alyosha-microwakeword, handsfree-crash-runtime-panel]
+    branches: [main, alyosha-live-intent, alyosha-microwakeword, handsfree-crash-runtime-panel, test/agent-service-pending-stop-20261021]
   workflow_dispatch:
 
 permissions:
@@ -143,6 +143,11 @@ jobs:
           cp patch_handsfree_oauth_primary.py closepaw/patch_handsfree_oauth_primary.py
           cd closepaw
           python3 patch_handsfree_oauth_primary.py
+
+      - name: Add pending-start Stop regression
+        run: |
+          mkdir -p closepaw/app/src/test/kotlin/ai/closepaw/app
+          cp custom/AgentServicePendingStartStopTest.kt closepaw/app/src/test/kotlin/ai/closepaw/app/AgentServicePendingStartStopTest.kt
 
       - name: Check UI smoke selectors against generated screen
         run: python3 tests/test_voice_runtime_ui_contract.py closepaw
