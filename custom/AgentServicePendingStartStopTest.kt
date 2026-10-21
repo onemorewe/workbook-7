@@ -4,6 +4,7 @@ import android.content.SharedPreferences
 import ai.closepaw.protocol.AgentEvent
 import ai.closepaw.protocol.Op
 import ai.closepaw.protocol.SessionId
+import ai.closepaw.protocol.SessionEndReason
 import ai.closepaw.protocol.SessionState
 import ai.closepaw.session.AgentSession
 import ai.closepaw.session.SessionServices
@@ -14,8 +15,11 @@ import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.spyk
 import io.mockk.unmockkObject
+import io.mockk.verify
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -23,6 +27,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -37,7 +42,7 @@ import org.junit.Before
 import org.junit.Test
 
 /**
- * Candidate regression against the real AgentService orchestration. NOT_RUN locally.
+ * Regression against the real AgentService orchestration; original Stop case RED in CI 145.
  *
  * No service lifecycle method, runAgent(), stopAgent(), or submitOps() is stubbed.
  * Only Android prefs and the external session-construction/session-execution boundary
@@ -162,6 +167,202 @@ class AgentServicePendingStartStopTest {
                 releaseFactory.countDown()
                 service.serviceScope.cancel()
                 service.serviceScope.coroutineContext[Job]!!.join()
+            }
+        }
+
+    @Test
+    fun `pending Stop sends terminal capsule notification before factory returns`() = serviceTest {
+        val overlay = attachOverlay()
+        val startup = beginBlockedStartup()
+
+        service.stopAgent()
+        runCurrent()
+
+        // This checks the service/controller contract, not rendered Android windows.
+        verify(exactly = 1) { overlay.onSessionCompleted(SessionEndReason.USER_STOPPED) }
+        assertNull(service.getActiveSession())
+        releaseFactory.countDown()
+        startup.join()
+        runCurrent()
+        verify(exactly = 1) { overlay.onSessionCompleted(SessionEndReason.USER_STOPPED) }
+    }
+
+    @Test
+    fun `Stop on published session keeps session driven terminal notification`() = serviceTest {
+        val overlay = attachOverlay()
+        val startup = beginBlockedStartup()
+        releaseFactory.countDown()
+        startup.join()
+        runCurrent()
+        assertSame(createdSession, service.getActiveSession())
+
+        service.stopAgent()
+        runCurrent()
+
+        coVerify(exactly = 1) { createdSession.submit(Op.Shutdown) }
+        verify(exactly = 0) { overlay.onSessionCompleted(any()) }
+    }
+
+    @Test
+    fun `new startup stays current when older factory finishes late`() = serviceTest {
+        val newerSession = fakeSession("newer-start")
+        val calls = AtomicInteger()
+        replaceFactory {
+            if (calls.getAndIncrement() == 0) {
+                awaitFactoryRelease()
+                createdSession
+            } else newerSession
+        }
+        val olderStartup = beginBlockedStartup()
+        service.runAgent("newer synthetic goal")
+        val newerStartup = service.serviceScope.coroutineContext[Job]!!.children.first { it !== olderStartup }
+        runCurrent()
+        newerStartup.join()
+        runCurrent()
+        assertSame(newerSession, service.getActiveSession())
+
+        releaseFactory.countDown()
+        olderStartup.join()
+        runCurrent()
+
+        assertSame(newerSession, service.getActiveSession())
+        coVerify(exactly = 0) { createdSession.submit(any<Op.UserInput>()) }
+        coVerify(exactly = 1) { createdSession.submit(Op.Shutdown) }
+        coVerify(exactly = 1) { newerSession.submit(Op.UserInput("newer synthetic goal")) }
+        coVerify(exactly = 0) { newerSession.submit(Op.Shutdown) }
+    }
+
+    @Test
+    fun `older factory failure cannot hide or overwrite newer startup status`() = serviceTest {
+        service.stopAgent()
+        val overlay = attachOverlay()
+        val newerSession = fakeSession("newer-after-failure")
+        val calls = AtomicInteger()
+        replaceFactory {
+            if (calls.getAndIncrement() == 0) {
+                awaitFactoryRelease()
+                throw IllegalStateException("synthetic old factory failure")
+            } else newerSession
+        }
+        val olderStartup = beginBlockedStartup()
+        service.runAgent("newer synthetic goal")
+        val newerStartup = service.serviceScope.coroutineContext[Job]!!.children.first { it !== olderStartup }
+        runCurrent()
+        newerStartup.join()
+        runCurrent()
+
+        releaseFactory.countDown()
+        olderStartup.join()
+        runCurrent()
+
+        assertSame(newerSession, service.getActiveSession())
+        assertEquals("\ud83d\uded1 Agent stopped", AgentService.statusFlow.value)
+        verify(exactly = 0) { overlay.hideAll() }
+        coVerify(exactly = 1) { newerSession.submit(Op.UserInput("newer synthetic goal")) }
+        service.stopAgent()
+        runCurrent()
+        // Old cleanup must not leave a pending marker that terminates the newer UI.
+        verify(exactly = 0) { overlay.onSessionCompleted(any()) }
+    }
+
+    @Test
+    fun `factory cancellation propagates without failed status or leftover pending UI`() = serviceTest {
+        service.stopAgent()
+        val overlay = attachOverlay()
+        replaceFactory {
+            awaitFactoryRelease()
+            throw CancellationException("synthetic factory cancellation")
+        }
+        val startup = beginBlockedStartup()
+        releaseFactory.countDown()
+        startup.join()
+        runCurrent()
+
+        assertTrue(startup.isCancelled)
+        assertNull(service.getActiveSession())
+        assertEquals("\ud83d\uded1 Agent stopped", AgentService.statusFlow.value)
+        verify(exactly = 0) { overlay.hideAll() }
+        service.stopAgent()
+        runCurrent()
+        verify(exactly = 0) { overlay.onSessionCompleted(any()) }
+    }
+
+    @Test
+    fun `cancelled service scope still shuts down late factory result`() = serviceTest {
+        service.stopAgent()
+        val startup = beginBlockedStartup()
+
+        service.serviceScope.cancel()
+        releaseFactory.countDown()
+        startup.join()
+        runCurrent()
+
+        assertTrue(startup.isCancelled)
+        assertNull(service.getActiveSession())
+        coVerify(exactly = 0) { createdSession.submit(any<Op.UserInput>()) }
+        coVerify(exactly = 1) { createdSession.submit(Op.Shutdown) }
+        assertEquals("\ud83d\uded1 Agent stopped", AgentService.statusFlow.value)
+    }
+
+    @Test
+    fun `Stop before queued startup runs does not call factory`() = serviceTest {
+        releaseFactory.countDown()
+        service.runAgent("offline synthetic goal")
+        val startup = service.serviceScope.coroutineContext[Job]!!.children.single()
+
+        service.stopAgent()
+        runCurrent()
+        startup.join()
+
+        verify(exactly = 0) {
+            AgentSession.create(any(), service, any(), any(), any(), any(), any())
+        }
+        assertNull(service.getActiveSession())
+        assertEquals("\ud83d\uded1 Agent stopped", AgentService.statusFlow.value)
+    }
+
+    private fun serviceTest(block: suspend TestScope.() -> Unit) =
+        runTest(dispatcher, timeout = 15.seconds) {
+            try {
+                block()
+            } finally {
+                releaseFactory.countDown()
+                service.serviceScope.cancel()
+                service.serviceScope.coroutineContext[Job]!!.join()
+            }
+        }
+
+    private fun TestScope.beginBlockedStartup(): Job {
+        service.runAgent("offline synthetic goal")
+        runCurrent()
+        assertTrue("Real runAgent did not reach mocked factory", factoryEntered.await(5, TimeUnit.SECONDS))
+        return service.serviceScope.coroutineContext[Job]!!.children.single()
+    }
+
+    private fun awaitFactoryRelease() {
+        factoryEntered.countDown()
+        check(releaseFactory.await(5, TimeUnit.SECONDS)) { "Factory barrier timed out" }
+    }
+
+    private fun replaceFactory(factory: () -> AgentSession) {
+        every {
+            AgentSession.create(any(), service, any(), any(), any(), any(), any())
+        } answers { factory() }
+    }
+
+    private fun fakeSession(id: String): AgentSession = mockk<AgentSession>().also { candidate ->
+        every { candidate.sessionId } returns SessionId(id)
+        every { candidate.state } returns MutableStateFlow(SessionState.Idle)
+        every { candidate.events } returns MutableSharedFlow<AgentEvent>()
+        every { candidate.getServices() } returns mockk<SessionServices>(relaxed = true)
+        coEvery { candidate.submit(any()) } returns Unit
+    }
+
+    private fun attachOverlay(): ServiceOverlayController =
+        mockk<ServiceOverlayController>(relaxed = true).also { overlay ->
+            AgentService::class.java.getDeclaredField("overlayController").apply {
+                isAccessible = true
+                set(service, overlay)
             }
         }
 }

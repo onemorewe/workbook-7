@@ -149,6 +149,9 @@ jobs:
           mkdir -p closepaw/app/src/test/kotlin/ai/closepaw/app
           cp custom/AgentServicePendingStartStopTest.kt closepaw/app/src/test/kotlin/ai/closepaw/app/AgentServicePendingStartStopTest.kt
 
+      - name: Guard pending AgentSession startup
+        run: python3 patch_agent_pending_start_stop.py closepaw
+
       - name: Check UI smoke selectors against generated screen
         run: python3 tests/test_voice_runtime_ui_contract.py closepaw
 
