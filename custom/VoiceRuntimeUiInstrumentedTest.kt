@@ -66,10 +66,10 @@ class VoiceRuntimeUiInstrumentedTest : TestCase() {
         voiceRuntime.click()
 
         assertNotNull(
-            "Dedicated Voice & Runtime page did not render Agent reasoning section",
-            device.wait(Until.findObject(By.text("Agent reasoning")), 5_000L),
+            "Dedicated Voice & Runtime page did not render Agent section",
+            device.wait(Until.findObject(By.text("Agent")), 5_000L),
         )
-        assertNotNull("Normal microphone section missing", device.findObject(By.text("Normal microphone")))
+        assertNotNull("Shared transcription section missing", device.findObject(By.text("Transcription · normal mic + Jarvis")))
         assertNotNull("Hands-free section missing", device.findObject(By.text("Hands-free")))
 
         val enable = device.wait(Until.findObject(By.text("Turn on hands-free")), 5_000L)

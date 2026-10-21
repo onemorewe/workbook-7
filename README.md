@@ -46,3 +46,12 @@ Verified on 2026-09-05: GitHub Actions [run **53**](https://github.com/onemorewe
 [`trace-backend/README.md`](trace-backend/README.md) documents the authenticated ingest/read endpoints, per-device write credentials, private schema, deployment sequence and real round-trip check. Backend auth/redaction tests and a real Postgres RLS/deduplication gate now run before the Android build.
 
 Supabase is connected in Work, but a project/deployment has not yet been verified. The Android relay remains on ntfy until private ingest succeeds. The owner-only dashboard's existing Site ID and exact continuation checkpoint are recorded in [`docs/WORK_HANDOFF.md`](docs/WORK_HANDOFF.md).
+
+## Generated UI contract check
+
+After the workflow applies the complete patch chain, run
+`python3 tests/test_voice_runtime_ui_contract.py closepaw`. This checks the copied
+instrumentation test's panel selectors against Compose render calls in the final
+generated source, catching labels changed by a later patch. It runs before the
+signed build on every workflow invocation. This source check does not establish
+visibility, scrolling, click behavior or Android instrumentation success.
