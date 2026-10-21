@@ -1,6 +1,6 @@
 # Private ClosePaw traces
 
-Status: implementation ready for deployment; **no Supabase project or live round trip has been confirmed**. The Android relay remains on ntfy until the real endpoint is authorized and tested. See `docs/WORK_HANDOFF.md` in the repository root for current deployment evidence.
+Status (2026-10-21): the existing project `qglsnnnshefwnrzsbeko` was restored to `ACTIVE_HEALTHY`; `trace-ingest` and `trace-read` are active. CI run 140 attempt 2 passed the authenticated ingest preflight, and its synthetic `ci-preflight-140` row was independently confirmed in private storage. The complete deployed read/auth round-trip and real Samsung round-trip remain **NOT_VERIFIED**. Keep ntfy until a known phone event is confirmed. See `docs/WORK_HANDOFF.md` for exact evidence.
 
 ## Boundaries
 

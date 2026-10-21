@@ -107,11 +107,20 @@ Current connector did not expose Edge Function secret-management operations. The
 
 Security advisor currently reports `RLS enabled, no policy` for these private tables. That is intentional for this design: the absence of client policies is the security boundary, not an error requiring a permissive policy.
 
-### Live round-trip evidence
+### Restored private ingest evidence — 2026-10-21
 
-The functions are ACTIVE and the schema/auth registry is deployed. A direct HTTP round-trip from this agent runtime could not be completed because the execution sandbox has no outbound DNS/network access to the Supabase hostname. Do **not** claim a verified live HTTP or real-phone round trip yet.
+The existing project was restored from `INACTIVE` to `ACTIVE_HEALTHY`; both Edge Functions are ACTIVE. No schema, function, credential or policy change was needed for this recovery.
 
-The existing backend unit tests and Postgres permission/deduplication tests remain CI gates, but they are not a substitute for the deployed HTTP round trip.
+GitHub Actions [run **140**, attempt **2**](https://github.com/onemorewe/workbook-7/actions/runs/39658261495), source `45bffcc4674e476b2eeace83242fca7f250fb650`, completed successfully. The first attempt failed at the deployed private-ingest gate with curl DNS exit 6 while the project was inactive. After restoration, the unchanged gate accepted HTTP 202, and a read-only database query independently found:
+
+- `app_version`: `ci-preflight-140`; `session_id`: `ci-140`
+- `stage`: `ci-private-trace-preflight`; source: `github-actions`
+- `client_event_id`: `1b896e8b-9814-45ff-a924-cfa4420c22a5`
+- `received_at`: `2026-10-21 19:14:46.227908+00`
+
+This verifies **CI -> authenticated deployed ingest -> private database**. It does not establish a real-phone trace, deployed read-token behavior, or the full `round-trip.mjs` auth/redaction/dedup suite. Those remain **NOT_VERIFIED**. Backend handler tests (13/13) and real Postgres permission/deduplication checks also passed in this run.
+
+Build job `119429836596` passed Android unit tests, release build, signature verification and upload. Artifact: `ClosePaw-GPT-Voice-signed-140`, ID `12374062131`, archive SHA-256 `02a1a171f9165a6cfebe59086b98ecc7d64d1d47f19b3e6e9b05c6ab0fcd1870`. This is the GitHub artifact archive digest, not the APK digest. Emulator steps were skipped because this was an ordinary push; do not report them as passed.
 
 ## Android trace transport — current branch
 
@@ -122,7 +131,7 @@ The existing backend unit tests and Postgres permission/deduplication tests rema
 
 The public repository contains only the placeholder `__TRACE_WRITE_TOKEN__`, not the real device credential. Private transport stays dormant while the placeholder is present. ntfy remains enabled.
 
-GitHub Actions knows how to replace `__TRACE_WRITE_TOKEN__` from repository secret `TRACE_WRITE_TOKEN` during the build without printing the credential. The GitHub connector available to this agent cannot create repository Actions secrets; it must be provisioned through GitHub Actions Secrets by the user/authorized automation. Until it exists, CI explicitly leaves the placeholder in place and the APK uses ntfy fallback only.
+GitHub Actions replaces `__TRACE_WRITE_TOKEN__` from repository secret `TRACE_WRITE_TOKEN` during the build without printing the credential. Run 140 attempt 2 confirmed credential injection and authenticated ingest acceptance. Preserve that existing secret; do not retrieve, rotate or recommit it merely to reproduce this check. This CI evidence does not prove that the currently installed phone build has private transport configured.
 
 Do not commit the plaintext write credential. Provision it at build time or through another private device-provisioning path.
 
@@ -181,6 +190,17 @@ Required gates before distributing a new APK:
 
 At the beginning of this continuation, branch HEAD `1ad9915b094ec979c429043ea9a1668e1105840d` had fully green GitHub Actions run **54**. Subsequent commits for the deployed registry/functions/Android dual-write/wake diagnostics/API fallback have triggered newer CI runs; check the latest run before distributing any APK.
 
+### Explicit emulator opt-in and zero live AI budget
+
+The existing emulator steps run on `workflow_dispatch` or when a push HEAD commit message contains `[android-ui]`. Ordinary pushes keep the fast path. Both KVM setup and the instrumentation step share the same condition; backend, private-ingest, Android unit, release/signature and upload gates remain required. The marker affects test selection only, not repository or application permissions.
+
+The existing runner uses API 35, x86_64, Pixel 6 with animations disabled. Only these classes run:
+
+- `HandsFreeSafetyInstrumentedTest`: microphone-permission startup block (case returns early if permission is already granted), synthetic final-transcript delivery, and duplicate final-transcript suppression. Parser cases call `handleServerEventForTest` with `test-key-not-used`; they never call the WebSocket-opening `start()` method.
+- `VoiceRuntimeUiInstrumentedTest`: fresh debug launch with blank goal, real drawer/Settings/Voice & Runtime navigation, panel text checks, and hands-free button without process crash. No provider credentials are installed; the existing preflight returns before service startup when the transcription key is absent. The current UI assertion verifies the screen remains present; it does not assert the exact error text.
+
+Live inference allowance is **0**. Do not inject AI API keys or OAuth accounts into this emulator. The scoped trace-write secret is only for diagnostic ingest and is not an AI credential. No speech generation, subscription login, STT request or intent/agent inference is part of these tests. The new opt-in run is **NOT_RUN** until its own GitHub result is checked; run 140 is only the baseline.
+
 ## Wake failure investigation — 2026-09-05
 
 The user reports that the currently installed older build behaves as if hands-free never wakes: ordinary ClosePaw works, but saying **Hey Jarvis** produces no visible transcript, no execution, and no audible wake acknowledgement.
@@ -227,13 +247,13 @@ Implementation rules:
 ## Immediate next steps
 
 1. Let the latest branch CI finish and fix any failure before release.
-2. Provision the device write credential privately as GitHub Actions secret `TRACE_WRITE_TOKEN`; never commit it.
+2. Preserve the existing privately provisioned `TRACE_WRITE_TOKEN`; CI ingest was verified on 2026-10-21. Never commit it.
 3. Run `trace-backend/scripts/round-trip.mjs` from an environment with outbound network access against the deployed functions.
 4. Configure the existing owner-only Site with the real `TRACE_READ_URL` and separate read credential.
 5. Build a stable-signed APK with private ingest enabled.
 6. Install over the existing stable-signed build; do not uninstall.
 7. With the phone idle in hands-free, inspect heartbeat first. `pcm_peak` proves microphone signal; `wake_peak` versus cutoff identifies model sensitivity. Then say `Hey Jarvis` and require `wake-detected` + first beep before testing STT/intent.
-8. Because the subscription limit is currently exhausted, verify that a recognized command produces `intent-gate-fallback` and that the resulting AgentSession starts on the mirrored API model rather than the Codex OAuth model.
+8. Keep live AI validation separate from this zero-budget emulator pass. When separately authorized, verify usage-limit fallback and the effective AgentSession model using the then-current account state and an explicit request allowance.
 9. Trigger a known Samsung hands-free event and verify its event ID/app version/time in private Supabase storage.
 10. Keep ntfy until that real-phone event is confirmed.
 11. Add richer run/session/tool/LLM/outcome correlation so a report such as `Jarvis не сработал примерно сейчас` can be diagnosed remotely with no user log extraction.

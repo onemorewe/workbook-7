@@ -45,7 +45,13 @@ Verified on 2026-09-05: GitHub Actions [run **53**](https://github.com/onemorewe
 
 [`trace-backend/README.md`](trace-backend/README.md) documents the authenticated ingest/read endpoints, per-device write credentials, private schema, deployment sequence and real round-trip check. Backend auth/redaction tests and a real Postgres RLS/deduplication gate now run before the Android build.
 
-Supabase is connected in Work, but a project/deployment has not yet been verified. The Android relay remains on ntfy until private ingest succeeds. The owner-only dashboard's existing Site ID and exact continuation checkpoint are recorded in [`docs/WORK_HANDOFF.md`](docs/WORK_HANDOFF.md).
+On 2026-10-21 the existing Supabase project was restored from inactivity. GitHub Actions [run **140**, attempt **2**](https://github.com/onemorewe/workbook-7/actions/runs/39658261495) passed private ingest, unit tests, release signing and artifact upload. Its synthetic `ci-preflight-140` event was independently found in private storage. This verifies the CI-to-ingest-to-database path; the full deployed read/auth round-trip and real Samsung round-trip remain **NOT_VERIFIED**. Keep ntfy until a known phone event is confirmed. Exact evidence and the existing owner-only dashboard identity are in [`docs/WORK_HANDOFF.md`](docs/WORK_HANDOFF.md).
+
+## Optional Android UI and parser run
+
+Use `workflow_dispatch`, or include `[android-ui]` in the HEAD commit message of a push to one of the workflow's configured branches. Both existing emulator steps then run; ordinary pushes still skip them. The private-ingest, backend, unit, release-signing and signature gates are unchanged.
+
+The existing API 35 / x86_64 / Pixel 6 emulator runs only `HandsFreeSafetyInstrumentedTest` and `VoiceRuntimeUiInstrumentedTest`. Live AI allowance is **0**: do not provision API keys or OAuth accounts. Parser cases feed synthetic server events without opening a WebSocket; the UI case navigates the real app and attempts hands-free startup with no credentials. This is parser/navigation/crash evidence, not a live transcription or phone test. Run 140 skipped these emulator steps, so its green result does not establish UI success.
 
 ## Generated UI contract check
 
