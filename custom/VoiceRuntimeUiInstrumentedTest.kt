@@ -105,11 +105,13 @@ class VoiceRuntimeUiInstrumentedTest : TestCase() {
                     .setMaxSearchSwipes(6)
                     .scrollIntoView(UiSelector().text(text))
             }
-            if (result.getOrDefault(false)) return
+            // CI149's capture showed the target on-screen after a false legacy scroll result.
+            // Judge success by the actual target after the bounded gesture, not that Boolean.
+            if (device.wait(Until.findObject(By.text(text)), 5_000L) != null) return
             val capture = captureStage("$stage-failure")
             fail(
                 "Could not scroll to '$text'; currentPackage=${device.currentPackageName}; " +
-                    "scrollError=${result.exceptionOrNull()?.message}; diagnostics=$capture"
+                    "scrollResult=${result.getOrNull()}; scrollError=${result.exceptionOrNull()?.message}; diagnostics=$capture"
             )
         }
 
