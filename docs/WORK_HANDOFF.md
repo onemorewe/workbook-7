@@ -203,6 +203,16 @@ Live inference allowance is **0**. Do not inject AI API keys or OAuth accounts i
 
 Run **141** (`39662057400`, source `fd645a30d3af0cf73c4a8c8ca9e5da351a55624c`) exercised the emulator: four tests finished, three passed and the UI case failed with `Hands-free enable button missing`. The test had not scrolled past the runtime card and threshold controls. Release/signature/upload were skipped; there is no APK artifact for run 141. The bounded-scroll candidate and stronger missing-key assertion require a new successful emulator run before this failure can be marked fixed.
 
+Run **143** (`39664435739`, source `a06ba9c334e89581e96d78be75dc7ef4a25379d2`) also finished four tests with one UI failure: `UiScrollable` returned false for `Turn on hands-free`. The foreground package was still the app, but the inline hierarchy log had no nodes. The cause of the missing target is **NOT_VERIFIED**; do not change the product layout from this evidence alone. Release/signature/upload were skipped and no signed artifact exists for run 143.
+
+### Diagnostic capture for the next emulator run
+
+The pinned runner action `a421e43855164a8197daf9d8d40fe71c6996bb0d` splits the `script` input into separate lines in [`src/script-parser.ts`](https://github.com/ReactiveCircus/android-emulator-runner/blob/a421e43855164a8197daf9d8d40fe71c6996bb0d/src/script-parser.ts), then executes each in a separate `sh -c` and stops on failure in [`src/main.ts`](https://github.com/ReactiveCircus/android-emulator-runner/blob/a421e43855164a8197daf9d8d40fe71c6996bb0d/src/main.ts). The previous multiline `set +e` / Gradle / status / logcat block therefore lost diagnostics after a failing Gradle command.
+
+The workflow now calls one `bash ../scripts/run-android-ui-checks.sh`. That wrapper preserves the actual instrumentation exit code and attempts to retrieve only `files/ui-diagnostics` through `run-as ai.closepaw`, even when tests fail. The test writes screenshots, complete XML and capture-error class/message files before scrolling and inside the failure helper while the Activity is alive. The upload step retains only this scoped synthetic capture and instrumentation XML for seven days; it does not include app data, source, APKs, signing material or environment dumps.
+
+Local verification: `python3 tests/test_android_ui_runner.py` reproduced two failures with the previous workflow form, then passed all three cases with the wrapper. It checks diagnostic collection after Gradle exit 17, preservation of that exit when ADB fails, and preservation of Gradle success when capture is unavailable. These use isolated boundary doubles, not an emulator. The next real diagnostic capture remains **NOT_RUN** until its own CI evidence is inspected; this change does not claim to fix the UI failure.
+
 ## Wake failure investigation — 2026-09-05
 
 The user reports that the currently installed older build behaves as if hands-free never wakes: ordinary ClosePaw works, but saying **Hey Jarvis** produces no visible transcript, no execution, and no audible wake acknowledgement.

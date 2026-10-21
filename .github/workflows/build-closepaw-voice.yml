@@ -147,6 +147,9 @@ jobs:
       - name: Check UI smoke selectors against generated screen
         run: python3 tests/test_voice_runtime_ui_contract.py closepaw
 
+      - name: Check emulator failure diagnostics runner
+        run: python3 tests/test_android_ui_runner.py
+
       - name: Inject private trace write token when configured
         env:
           TRACE_WRITE_TOKEN: ${{ secrets.TRACE_WRITE_TOKEN }}
@@ -203,6 +206,7 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - name: Run hands-free Android UI + parser sandbox
+        id: android_ui
         if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[android-ui]'))
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -211,13 +215,18 @@ jobs:
           profile: pixel_6
           disable-animations: true
           working-directory: closepaw
-          script: |
-            set +e
-            ./gradlew :app:connectedDebugAndroidTest --stacktrace -Pandroid.testInstrumentationRunnerArguments.class=ai.closepaw.ui.capsule.voice.HandsFreeSafetyInstrumentedTest,ai.closepaw.ui.capsule.voice.VoiceRuntimeUiInstrumentedTest
-            STATUS=$?
-            echo "----- relevant emulator logcat -----"
-            adb logcat -d -v threadtime | grep -E 'AndroidRuntime|HandsFree|ClosePaw|RealtimeCommandTranscriber|CodexResponseClient' | tail -n 500 || true
-            exit $STATUS
+          script: bash ../scripts/run-android-ui-checks.sh
+
+      - name: Upload hermetic UI diagnostics
+        if: always() && (steps.android_ui.outcome == 'success' || steps.android_ui.outcome == 'failure')
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClosePaw-Android-UI-diagnostics-${{ github.run_number }}
+          path: |
+            closepaw/app/build/reports/ui-diagnostics/
+            closepaw/app/build/outputs/androidTest-results/connected/debug/**/*.xml
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Set custom version
         working-directory: closepaw

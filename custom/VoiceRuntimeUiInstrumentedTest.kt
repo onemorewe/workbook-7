@@ -10,6 +10,7 @@ import androidx.test.uiautomator.UiScrollable
 import androidx.test.uiautomator.UiSelector
 import androidx.test.uiautomator.Until
 import java.io.ByteArrayOutputStream
+import java.io.File
 import junit.framework.TestCase
 
 /**
@@ -23,6 +24,26 @@ class VoiceRuntimeUiInstrumentedTest : TestCase() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         val device = UiDevice.getInstance(instrumentation)
+
+        // Capture while the failing Activity is still alive, not after instrumentation exits.
+        // This fresh CI emulator has no provider credentials or personal app data.
+        fun captureStage(stage: String): String {
+            val directory = File(context.filesDir, "ui-diagnostics")
+            val errors = mutableListOf<String>()
+            if (!directory.isDirectory && !directory.mkdirs()) {
+                return "Cannot create scoped diagnostic directory"
+            }
+            runCatching {
+                check(device.takeScreenshot(File(directory, "$stage.png"))) { "takeScreenshot returned false" }
+            }.onFailure { errors += "screenshot: ${it.javaClass.name}: ${it.message}" }
+            runCatching {
+                File(directory, "$stage.xml").outputStream().use { device.dumpWindowHierarchy(it) }
+            }.onFailure { errors += "hierarchy: ${it.javaClass.name}: ${it.message}" }
+            val details = if (errors.isEmpty()) "OK" else errors.joinToString("\n")
+            runCatching { File(directory, "$stage-errors.txt").writeText(details) }
+                .onFailure { errors += "error-file: ${it.javaClass.name}: ${it.message}" }
+            return if (errors.isEmpty()) "Saved $stage" else errors.joinToString("; ")
+        }
 
         runCatching {
             instrumentation.uiAutomation.grantRuntimePermission(
@@ -73,10 +94,11 @@ class VoiceRuntimeUiInstrumentedTest : TestCase() {
         )
         assertNotNull("Shared transcription section missing", device.findObject(By.text("Transcription · normal mic + Jarvis")))
         assertNotNull("Hands-free section missing", device.findObject(By.text("Hands-free")))
+        println(captureStage("panel-before-scroll"))
 
         // The button follows runtime details and a slider inside the real scrollable page.
         // A visible section heading does not imply that its controls fit in the viewport.
-        fun scrollToText(text: String) {
+        fun scrollToText(text: String, stage: String) {
             val result = runCatching {
                 UiScrollable(UiSelector().scrollable(true))
                     .setAsVerticalList()
@@ -84,17 +106,14 @@ class VoiceRuntimeUiInstrumentedTest : TestCase() {
                     .scrollIntoView(UiSelector().text(text))
             }
             if (result.getOrDefault(false)) return
-            val hierarchy = ByteArrayOutputStream().use { out ->
-                runCatching { device.dumpWindowHierarchy(out) }
-                out.toString(Charsets.UTF_8.name()).take(12_000)
-            }
+            val capture = captureStage("$stage-failure")
             fail(
                 "Could not scroll to '$text'; currentPackage=${device.currentPackageName}; " +
-                    "scrollError=${result.exceptionOrNull()?.message}; hierarchy=$hierarchy"
+                    "scrollError=${result.exceptionOrNull()?.message}; diagnostics=$capture"
             )
         }
 
-        scrollToText("Turn on hands-free")
+        scrollToText("Turn on hands-free", "enable-button")
         val enable = device.wait(Until.findObject(By.text("Turn on hands-free")), 5_000L)
         assertNotNull("Hands-free enable button missing", enable)
         enable.click()
@@ -103,7 +122,7 @@ class VoiceRuntimeUiInstrumentedTest : TestCase() {
         // preflight error while the app stays alive on the same screen, never a process crash.
         device.waitForIdle()
         val expectedError = "Last error: OpenAI API key is required for live transcription"
-        scrollToText(expectedError)
+        scrollToText(expectedError, "preflight-error")
         assertNotNull(
             "Missing credential preflight error was not rendered",
             device.wait(Until.findObject(By.text(expectedError)), 5_000L),
