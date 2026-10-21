@@ -67,8 +67,29 @@ class VoiceRuntimeUiInstrumentedTest : TestCase() {
         instrumentation.startActivitySync(launch)
         device.waitForIdle()
 
-        val menu = device.wait(Until.findObject(By.desc("Open menu")), 30_000L)
+        var menu = device.wait(Until.findObject(By.desc("Open menu")), 30_000L)
         if (menu == null) {
+            println(captureStage("launch-header-failure"))
+            // CI150/151 captured an external launcher ANR over the launched Activity. Recover
+            // only that exact, unambiguous system dialog once; an app ANR must still fail.
+            val systemTitles = device.findObjects(By.pkg("android").res("android", "alertTitle"))
+            val dialog = device.findObjects(By.pkg("android").res("android", "parentPanel")).singleOrNull()
+            val title = dialog?.findObjects(By.res("android", "alertTitle"))?.singleOrNull()
+            val close = dialog?.findObjects(By.res("android", "aerr_close").text("Close app"))?.singleOrNull()
+            val quickstepTitle = By.pkg("android").res("android", "alertTitle").text("Quickstep isn't responding")
+            if (device.currentPackageName == "android" && systemTitles.size == 1 &&
+                title?.text == "Quickstep isn't responding" && close != null
+            ) {
+                println("Closing one exact Quickstep system ANR before retrying the debug Activity launch")
+                close.click()
+                assertTrue("Quickstep system ANR did not close", device.wait(Until.gone(quickstepTitle), 5_000L))
+                instrumentation.startActivitySync(launch)
+                device.waitForIdle()
+                menu = device.wait(Until.findObject(By.desc("Open menu")), 30_000L)
+            }
+        }
+        if (menu == null) {
+            println(captureStage("launch-final-header-failure"))
             val hierarchy = ByteArrayOutputStream().use { out ->
                 runCatching { device.dumpWindowHierarchy(out) }
                 out.toString(Charsets.UTF_8.name()).take(12_000)
