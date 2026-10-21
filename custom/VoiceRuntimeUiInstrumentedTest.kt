@@ -118,6 +118,7 @@ class VoiceRuntimeUiInstrumentedTest : TestCase() {
         scrollToText("Turn on hands-free", "enable-button")
         val enable = device.wait(Until.findObject(By.text("Turn on hands-free")), 5_000L)
         assertNotNull("Hands-free enable button missing", enable)
+        val errorBeforeClick = HandsFreeVoiceService.lastError.value
         enable.click()
 
         // No credentials are installed in this hermetic emulator. The expected result is a visible
@@ -125,11 +126,29 @@ class VoiceRuntimeUiInstrumentedTest : TestCase() {
         device.waitForIdle()
         val expectedError = "Last error: OpenAI API key is required for live transcription"
         scrollToText(expectedError, "preflight-error")
-        assertNotNull(
-            "Missing credential preflight error was not rendered",
-            device.wait(Until.findObject(By.text(expectedError)), 5_000L),
-        )
-        assertEquals("App left/crashed after pressing hands-free", context.packageName, device.currentPackageName)
-        assertFalse("Hands-free started without a transcription credential", HandsFreeVoiceService.isEnabled(context))
+        try {
+            assertNotNull(
+                "Missing credential preflight error was not rendered",
+                device.wait(Until.findObject(By.text(expectedError)), 5_000L),
+            )
+            assertEquals("App left/crashed after pressing hands-free", context.packageName, device.currentPackageName)
+            assertFalse("Hands-free started without a transcription credential", HandsFreeVoiceService.isEnabled(context))
+        } catch (failure: AssertionError) {
+            // Capture only after failure, so diagnostic I/O does not change success timing.
+            val state = runCatching {
+                fun bounded(value: String?) = value?.take(300)?.replace('\n', ' ') ?: "null"
+                "errorBeforeClick=${bounded(errorBeforeClick)}; " +
+                    "lastError=${bounded(HandsFreeVoiceService.lastError.value)}; " +
+                    "runtimeStatus=${bounded(HandsFreeVoiceService.runtimeStatus.value)}; " +
+                    "isEnabled=${HandsFreeVoiceService.isEnabled(context)}; " +
+                    "currentPackage=${bounded(device.currentPackageName)}"
+            }.getOrElse { "state-read: ${it.javaClass.name}: ${it.message?.take(300)}" }
+            println("Preflight assertion failure state: $state")
+            println(captureStage("preflight-assertion-failure"))
+            runCatching {
+                File(context.filesDir, "ui-diagnostics/preflight-assertion-failure-state.txt").writeText(state)
+            }.onFailure { println("state-file: ${it.javaClass.name}: ${it.message?.take(300)}") }
+            throw failure
+        }
     }
 }
